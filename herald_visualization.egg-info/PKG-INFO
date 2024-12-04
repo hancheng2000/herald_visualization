@@ -1,0 +1,14 @@
+Metadata-Version: 2.1
+Name: herald_visualization
+Version: 0.1.0
+Summary: A package for visualizing data in herald project
+Author: Hancheng Zhao, Chris Eschler
+Author-email: zhaohc@umich.edu
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: navani
+Requires-Dist: matplotlib
