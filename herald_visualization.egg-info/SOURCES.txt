@@ -1,9 +1,0 @@
-setup.py
-herald_visualization/__init__.py
-herald_visualization/mpr2csv.py
-herald_visualization/plot.py
-herald_visualization.egg-info/PKG-INFO
-herald_visualization.egg-info/SOURCES.txt
-herald_visualization.egg-info/dependency_links.txt
-herald_visualization.egg-info/requires.txt
-herald_visualization.egg-info/top_level.txt
