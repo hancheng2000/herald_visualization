@@ -98,7 +98,7 @@ def import_data_using_listfile(df, listfile='stitch.txt'):
                         df = append_import_to_df(df, filename, offset_flags=offset_flags)
                         data_filenames += [filename]
                 print(f"Imported using {listfile}.")
-                return data_filenames
+                return data_filenames, df
     except IOError:
         # If listfile cannot be opened
         print(f"Unable to open/read {listfile}. Analysis skipped.")
@@ -132,7 +132,7 @@ def import_data_using_pattern(df):
 
     for filename in data_filenames:
         df = append_import_to_df(df, filename)
-    return data_filenames
+    return data_filenames, df
 
 def import_settings(data_filenames):
     """
@@ -187,16 +187,19 @@ def import_settings(data_filenames):
 
 # convert all relevant data to .csv
 def mpr2csv(
+        dir_name,
         listfile='stitch.txt',
     ):
     df = pd.DataFrame()
+    home_dir = os.getcwd()
+    os.chdir(dir_name)
     print("Running in", os.getcwd())
     
     # Import data and settings
     if os.path.isfile(listfile):
-        data_filenames = import_data_using_listfile(df=df)
+        data_filenames, df = import_data_using_listfile(df=df)
     else:
-        data_filenames = import_data_using_pattern(df=df)
+        data_filenames, df = import_data_using_pattern(df=df)
     print(f"Data file(s): {data_filenames}")
     cell_props, settings_filename = import_settings(data_filenames)
     print(f"Settings file: {settings_filename}")
@@ -248,6 +251,8 @@ def mpr2csv(
         if number_of_cycles >= 2:
             print(f"Cycle stability (2nd discharge energy/1st discharge energy): {cycle_summary.iloc[1]['Specific Discharge Energy']/cycle_summary.iloc[0]['Specific Discharge Energy']}")
             print(f"Discharge efficiency (1st discharge energy/2nd charge energy): {cycle_summary.iloc[0]['Specific Discharge Energy']/cycle_summary.iloc[1]['Specific Charge Energy']}")
+    
+    os.chdir(home_dir)
 
 # # Split data into sections based on current to figure out when relaxation is happening
 # i = 0
