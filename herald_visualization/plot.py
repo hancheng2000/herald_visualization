@@ -31,11 +31,11 @@ default_params = {# 'axes.labelsize': 'x-large',
     }
 
 
-def plot_discharge(
+def plot_gitt(
         dir_name,
         full_cycles = None,
         half_cycles = None,
-        save_png = True,
+        save_png = False,
         png_filename = None,
         plt_params = None,
     ):
@@ -44,9 +44,9 @@ def plot_discharge(
         plt.rcParams.update(plt_params)
     else:
         plt.rcParams.update(default_params)
-    csv_files = glob.glob(os.path.join(dir_name,'outputs','*.csv'))
+    csv_files = glob.glob(os.path.join(dir_name,'*.csv'))
     print(csv_files)
-    summary_file = os.path.join(dir_name,'outputs','cycle_summary.csv')
+    summary_file = os.path.join(dir_name,'cycle_summary.csv')
     data_file = [file for file in csv_files if 'cycle_summary' not in file][0]
     df = pd.read_csv(data_file)
     df_sum = pd.read_csv(summary_file)
@@ -55,7 +55,6 @@ def plot_discharge(
     if full_cycles == None and half_cycles == None:
         full_cycles = df_sum['full cycle'].tolist()
     half_cycles = list(range(0,len(full_cycles)*2))
-    print(half_cycles,full_cycles)
     fig, ax = plt.subplots()
     colors = plt.cm.viridis(np.linspace(0,1,len(full_cycles)*2))
     for i,cycle in enumerate(half_cycles[1:]):
@@ -80,3 +79,46 @@ def plot_discharge(
             png_filename = os.path.join(dir_name,'outputs','cycle.png')
         plt.savefig(png_filename,dpi=300)
     return fig, ax
+
+def plot_cycle(
+        dir_name,
+        full_cycles = None,
+        save_png = False,
+        png_filename = None,
+        plt_params = None,
+    ):
+    # plotting params
+    if plt_params != None:
+        plt.rcParams.update(plt_params)
+    else:
+        plt.rcParams.update(default_params)
+    csv_files = glob.glob(os.path.join(dir_name,'*.csv'))
+    print(csv_files)
+    summary_file = os.path.join(dir_name,'cycle_summary.csv')
+    data_file = [file for file in csv_files if 'cycle_summary' not in file][0]
+    df = pd.read_csv(data_file)
+    df_sum = pd.read_csv(summary_file)
+    # if full cycle is not specified, use all cycles
+    if full_cycles == None:
+        full_cycles = df_sum['full cycle'].tolist()
+    fig, ax = plt.subplots()
+    colors = plt.cm.viridis(np.linspace(0,1,len(full_cycles)))
+    for i,cycle in enumerate(full_cycles[:]):
+        df1 = df[df['full cycle']==cycle]
+        # round the whole df to 4 decimal places
+        df1 = df1.round(4)
+        # remove 0 specific capacity
+        df1 = df1[df1['Specific Capacity']!=0]
+        df1['Specific Capacity'] = df1['Specific Capacity'] - df1['Specific Capacity'].min()
+        # remove decreasing specific capacity
+        df1 = df1[df1['Specific Capacity'].cummax() == df1['Specific Capacity']]
+        plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle)],label='Cycle '+str(int((cycle+1)/2)),linestyle='-')
+    plt.xlabel('Specific Capacity (mAh/g)')
+    plt.ylabel('Voltage (V)')
+    plt.legend(frameon=False)
+    plt.tight_layout()
+    if save_png:
+        if png_filename == None:
+            png_filename = os.path.join(dir_name,'outputs','cycle.png')
+        plt.savefig(png_filename,dpi=300)
+    return fig, ax    
