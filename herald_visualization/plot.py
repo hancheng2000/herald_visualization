@@ -70,7 +70,7 @@ def plot_gitt(
             plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle)],label='Cycle '+str(int((cycle+1)/2)),linestyle='-')
         else:
             plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle-1)],linestyle='--')
-    plt.xlabel('Specific Capacity (mAh/g)')
+    plt.xlabel('Specific Capacity (mAh/g)-AM')
     plt.ylabel('Voltage (V)')
     plt.legend(frameon=False)
     plt.tight_layout()
@@ -113,7 +113,7 @@ def plot_cycle(
         # remove decreasing specific capacity
         df1 = df1[df1['Specific Capacity'].cummax() == df1['Specific Capacity']]
         plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle)],label='Cycle '+str(int((cycle+1)/2)),linestyle='-')
-    plt.xlabel('Specific Capacity (mAh/g)')
+    plt.xlabel('Specific Capacity (mAh/g)-AM')
     plt.ylabel('Voltage (V)')
     plt.legend(frameon=False)
     plt.tight_layout()
@@ -122,3 +122,22 @@ def plot_cycle(
             png_filename = os.path.join(dir_name,'outputs','cycle.png')
         plt.savefig(png_filename,dpi=300)
     return fig, ax    
+
+def plot_multi_cell(
+    file_list,
+    cycles = None,
+    save_png = False,
+    ):
+    """
+    Add the contents of a file to an existing DataFrame, possibly offsetting the time and capacity in the new data.
+    The offsets will be based on the max time and latest capacity in the existing DataFrame.
+
+    Args:
+    - df (pandas.DataFrame): The DataFrame to be added to.
+    - filename (str): The filepath that should be imported and added to the DataFrame.
+    - offset_flags (str, opt): String containing T and/or C to indicate that time and/or capacity should be offset.
+
+    Returns:
+    - pandas.DataFrame: A DataFrame with the data imported from filename appended to df.
+    """    
+    fig, ax = plt.subplots()
