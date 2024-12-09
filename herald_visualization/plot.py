@@ -33,6 +33,8 @@ default_params = {# 'axes.labelsize': 'x-large',
 
 def plot_gitt(
         dir_name,
+        fig=None,
+        ax=None,
         full_cycles = None,
         half_cycles = None,
         save_png = False,
@@ -55,7 +57,8 @@ def plot_gitt(
     if full_cycles == None and half_cycles == None:
         full_cycles = df_sum['full cycle'].tolist()
     half_cycles = list(range(0,len(full_cycles)*2))
-    fig, ax = plt.subplots()
+    if fig == None and ax == None:
+        fig, ax = plt.subplots()
     colors = plt.cm.viridis(np.linspace(0,1,len(full_cycles)*2))
     for i,cycle in enumerate(half_cycles[1:]):
         df1 = df[df['half cycle']==cycle]
@@ -82,6 +85,8 @@ def plot_gitt(
 
 def plot_cycle(
         dir_name,
+        fig=None,
+        ax=None,
         full_cycles = None,
         save_png = False,
         png_filename = None,
@@ -101,7 +106,8 @@ def plot_cycle(
     # if full cycle is not specified, use all cycles
     if full_cycles == None:
         full_cycles = df_sum['full cycle'].tolist()
-    fig, ax = plt.subplots()
+    if fig == None and ax == None:
+        fig, ax = plt.subplots()
     colors = plt.cm.viridis(np.linspace(0,1,len(full_cycles)))
     for i,cycle in enumerate(full_cycles[:]):
         df1 = df[df['full cycle']==cycle]
@@ -125,19 +131,63 @@ def plot_cycle(
 
 def plot_multi_cell(
     file_list,
-    cycles = None,
+    fig=None, 
+    ax=None,
+    cycles = 'all',
     save_png = False,
+    png_filename = None,
+    plt_params = None,
     ):
     """
-    Add the contents of a file to an existing DataFrame, possibly offsetting the time and capacity in the new data.
-    The offsets will be based on the max time and latest capacity in the existing DataFrame.
+    plot the cycle of multiple cells
 
     Args:
-    - df (pandas.DataFrame): The DataFrame to be added to.
-    - filename (str): The filepath that should be imported and added to the DataFrame.
-    - offset_flags (str, opt): String containing T and/or C to indicate that time and/or capacity should be offset.
+    - file_list: list of csv files to plot cycling data
+    - fig, ax: matplotlib figure and axis objects
+    - cycles: str or list of int, specify the cycles to plot. Str options can be 'all', 'first' and 'last'. Default is 'all'.
+    - save_png: bool, save the plot as png file. Default is False.
 
     Returns:
-    - pandas.DataFrame: A DataFrame with the data imported from filename appended to df.
+    - fig, ax: matplotlib figure and axis objects
     """    
-    fig, ax = plt.subplots()
+    if fig == None and ax == None:
+        fig, ax = plt.subplots()
+    dfs = []
+    for file in file_list:
+        dfs.append(pd.read_csv(file))
+    if type(cycles) == list:
+        cycles = [[int(cycle)] for cycle in cycles]
+    elif cycles == 'all':
+        cycles = [df['full cycle'].unique().tolist() for df in dfs]
+    elif cycles == 'first':
+        cycles = [[1] for df in dfs]
+    elif cycles == 'last':
+        cycles = [[df['full cycle'].max() for df in dfs]]
+    # count all elements in cycles, including all elements in sublists, and assign one color to each cycle
+    n_cycles = sum([len(cycle) for cycle in cycles])
+    colors = plt.cm.viridis(np.linspace(0,1,n_cycles))
+    print(n_cycles)
+    colors_i = 0
+    for i, df in enumerate(dfs):
+        cycles_to_plot = cycles[i]
+        for cycle in cycles_to_plot:
+            df1 = df[df['full cycle']==cycle]
+            # round the whole df to 4 decimal places
+            df1 = df1.round(4)
+            # remove 0 specific capacity
+            df1 = df1[df1['Specific Capacity']!=0]
+            df1['Specific Capacity'] = df1['Specific Capacity'] - df1['Specific Capacity'].min()
+            # remove decreasing specific capacity
+            df1 = df1[df1['Specific Capacity'].cummax() == df1['Specific Capacity']]
+            plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[colors_i],label='Cell '+str(i+1)+' Cycle '+str(int((cycle+1)/2)),linestyle='-')
+            colors_i += 1
+    plt.xlabel('Specific Capacity (mAh/g)-AM')
+    plt.ylabel('Voltage (V)')
+    plt.legend(frameon=False)
+    plt.tight_layout()
+    if save_png:
+        if png_filename == None:
+            png_filename = os.path.join(dir_name,'outputs','cycle.png')
+        plt.savefig(png_filename,dpi=300)
+    return fig, ax
+        
