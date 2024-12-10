@@ -186,7 +186,7 @@ def import_settings(data_filenames):
 
 
 # convert all relevant data to .csv
-def mpr2csv(
+def cycle_mpr2csv(
         dir_name,
         listfile='stitch.txt',
     ):
@@ -253,6 +253,21 @@ def mpr2csv(
             print(f"Discharge efficiency (1st discharge energy/2nd charge energy): {cycle_summary.iloc[0]['Specific Discharge Energy']/cycle_summary.iloc[1]['Specific Charge Energy']}")
     
     os.chdir(home_dir)
+    return df
+
+def eis_mpr2csv(
+    dir_name,
+):
+    from galvani import BioLogic
+    mpr_files = glob.glob(dir_name+'/*PEIS*.mpr')
+    mpr_file = mpr_files[0]
+    data = BioLogic.MPRfile(mpr_file)
+    df = pd.DataFrame(data.data)
+    file_name = mpr_file.split('/')[-1].replace('.mpr', '.csv')
+    home_dir = os.getcwd()
+    df.to_csv(os.path.join(dir_name, 'outputs', file_name), index=False)
+    return df
+
 
 # # Split data into sections based on current to figure out when relaxation is happening
 # i = 0
