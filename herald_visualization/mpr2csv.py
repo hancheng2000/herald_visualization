@@ -186,7 +186,7 @@ def import_settings(data_filenames):
 
 
 # convert all relevant data to .csv
-def mpr2csv(
+def cycle_mpr2csv(
         dir_name,
         listfile='stitch.txt',
     ):
@@ -253,6 +253,33 @@ def mpr2csv(
             print(f"Discharge efficiency (1st discharge energy/2nd charge energy): {cycle_summary.iloc[0]['Specific Discharge Energy']/cycle_summary.iloc[1]['Specific Charge Energy']}")
     
     os.chdir(home_dir)
+    return df
+
+def eis_mpr2csv(
+    dir_name,
+    state = 'gitt',
+):
+    """
+    Convert EIS mpr files to csv files
+    Args:
+    - dir_name: Directory containing the mpr files
+    - state: either 'gitt' or 'as-built'. In the case of 'gitt', the *03_PEIS*.mpr file is used. In the case of 'as-built', the *01_PEIS*.mpr file is used.
+    """    
+    from galvani import BioLogic
+    if state == 'gitt':
+        mpr_files = glob.glob(dir_name+'/*03_PEIS*.mpr')
+    elif state == 'as-built':
+        mpr_files = glob.glob(dir_name+'/*01_PEIS*.mpr')
+    else:
+        raise NotImplementedError("Only 'gitt' and 'as-built' states are supported.")
+    mpr_file = mpr_files[0]
+    data = BioLogic.MPRfile(mpr_file)
+    df = pd.DataFrame(data.data)
+    file_name = mpr_file.split('/')[-1].replace('.mpr', '.csv')
+    home_dir = os.getcwd()
+    df.to_csv(os.path.join(dir_name, 'outputs', file_name), index=False)
+    return df
+
 
 # # Split data into sections based on current to figure out when relaxation is happening
 # i = 0
