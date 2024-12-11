@@ -257,9 +257,21 @@ def cycle_mpr2csv(
 
 def eis_mpr2csv(
     dir_name,
+    state = 'gitt',
 ):
+    """
+    Convert EIS mpr files to csv files
+    Args:
+    - dir_name: Directory containing the mpr files
+    - state: either 'gitt' or 'as-built'. In the case of 'gitt', the *03_PEIS*.mpr file is used. In the case of 'as-built', the *01_PEIS*.mpr file is used.
+    """    
     from galvani import BioLogic
-    mpr_files = glob.glob(dir_name+'/*PEIS*.mpr')
+    if state == 'gitt':
+        mpr_files = glob.glob(dir_name+'/*03_PEIS*.mpr')
+    elif state == 'as-built':
+        mpr_files = glob.glob(dir_name+'/*01_PEIS*.mpr')
+    else:
+        raise NotImplementedError("Only 'gitt' and 'as-built' states are supported.")
     mpr_file = mpr_files[0]
     data = BioLogic.MPRfile(mpr_file)
     df = pd.DataFrame(data.data)
