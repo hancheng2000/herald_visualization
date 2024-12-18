@@ -931,7 +931,7 @@ def multi_dqdv_plot(df, cycles, colormap='viridis',
     cbar = fig.colorbar(sm, ax=plt.gca())
     cbar.set_label('Cycle', rotation=270, labelpad=10)
     ax.set_xlabel('Voltage / V')
-    ax.set_ylabel('dQ/dV / $mAhV^{-1}$')
+    ax.set_ylabel('dQ/dV / mAhV$^{-1}$')
     return fig, ax
 
 # def multi_dqdv_plot(df, cycles, colormap='viridis', 

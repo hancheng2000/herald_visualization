@@ -184,6 +184,27 @@ def import_settings(data_filenames):
     except:
         print("Unable to read settings file.")
 
+def total_AM_mass(cell_props):
+    """
+    Uses cell properties imported from a settings file to convert the cathode AM mass
+    (inputted into EC-lab at test start) into a total AM mass, i.e. unlithiated to lithiated.
+    Assumes that e_per_ion is the total number of electrons transferred for a complete reaction,
+    e.g. 3 for 3Li + FeF3 <-> Fe + 3LiF.
+    """
+    if [active_material_mass, x_at_mass, mol_weight, interc_weight, x_at_start, e_per_ion] in cell_props:
+        # Molar mass of fully deintercalated cathode material
+        empty_mol_weight = mol_weight - interc_weight * x_at_mass
+
+        # Molar mass of fully intercalated cathode material
+        full_mol_weight = empty_mol_weight + interc_weight * e_per_ion
+
+        # Mass of fully intercalated cathode material
+        full_active_material_mass = full_mol_weight * active_material_mass / mol_weight
+        return full_active_material_mass
+
+    else:
+        print("Imported settings did not contain sufficient values to calculate total AM mass.")
+        return 0
 
 # convert all relevant data to .csv
 def cycle_mpr2csv(
