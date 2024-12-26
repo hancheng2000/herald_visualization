@@ -204,8 +204,19 @@ def total_AM_mass(cell_props):
 
     else:
         print("Imported settings did not contain sufficient values to calculate total AM mass.")
-        return 0
+        return 0 # Ensures that future calculations based on this will return NaN
 
+def id_to_path(cellid, root_dir='../..'):
+    """
+    Find the correct directory path to a data folder from the cell ID
+    """
+    glob_str = os.path.join('**', '*'+cellid+'*/')
+    paths = glob.glob(glob_str, root_dir=root_dir, recursive=True)
+    if len(paths) == 1:
+        return paths[0]
+    else:
+        print(f"Too many paths matched: {paths}")
+    
 # convert all relevant data to .csv
 def cycle_mpr2csv(
         dir_name,
