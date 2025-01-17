@@ -129,7 +129,7 @@ def plot_multi_cell(
     cycles = 'all',
     save_png = False,
     png_filename = None,
-    plt_params = None,
+    plt_params = None
     ):
     """
     plot the cycle of multiple cells
@@ -173,8 +173,8 @@ def plot_multi_cell(
             df1 = df1[df1['Specific Capacity'].cummax() == df1['Specific Capacity']]
             plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[colors_i],label='Cell '+str(i+1)+' Cycle '+str(int((cycle+1)/2)),linestyle='-')
             colors_i += 1
-    plt.xlabel('Specific Capacity (mAh/g)-Cathode AM')
-    plt.ylabel('Voltage vs Li/Li+ (V)')
+    plt.xlabel('Specific Capacity (mAh/g cathode AM)')
+    plt.ylabel('Voltage (V)')
     plt.tight_layout()
     if save_png:
         plt.savefig(png_filename,dpi=300)

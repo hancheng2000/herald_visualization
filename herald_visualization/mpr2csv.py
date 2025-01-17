@@ -153,7 +153,7 @@ def import_settings(data_filenames):
     settings_keys = {
         'active_material_mass': "Mass of active material",
         'x_at_mass': " at x = ",
-        'mol_weight': "Molecular weight of active material",
+        'empty_mol_weight': "Molecular weight of active material",
         'interc_weight': "Atomic weight of intercalated ion",
         'x_at_start': "Acquisition started at",
         'e_per_ion': "Number of e- transfered per intercalated ion",
@@ -176,8 +176,9 @@ def import_settings(data_filenames):
                 else:
                     new_key = [key for key, val in settings_keys.items() if val in line]
                     if new_key:
-                        match = re.search(val_regex, line)
-                        cell_props[new_key[0]] = float(match.group(0))
+                        match = re.findall(val_regex, line)
+                        # The final matching string is used
+                        cell_props[new_key[0]] = float(match[-1])
             
             return cell_props, settings_filename
       
@@ -191,20 +192,21 @@ def total_AM_mass(cell_props):
     Assumes that e_per_ion is the total number of electrons transferred for a complete reaction,
     e.g. 3 for 3Li + FeF3 <-> Fe + 3LiF.
     """
-    if [active_material_mass, x_at_mass, mol_weight, interc_weight, x_at_start, e_per_ion] in cell_props:
-        # Molar mass of fully deintercalated cathode material
-        empty_mol_weight = mol_weight - interc_weight * x_at_mass
+    interc_weight = cell_props['interc_weight']
+    x_at_mass = cell_props['x_at_mass']
+    empty_mol_weight = cell_props['empty_mol_weight']
+    e_per_ion = cell_props['e_per_ion']
+    active_material_mass = cell_props['active_material_mass']
 
-        # Molar mass of fully intercalated cathode material
-        full_mol_weight = empty_mol_weight + interc_weight * e_per_ion
+    # Molar mass of material in starting condition
+    starting_mol_weight = empty_mol_weight + (x_at_mass * interc_weight)
 
-        # Mass of fully intercalated cathode material
-        full_active_material_mass = full_mol_weight * active_material_mass / mol_weight
-        return full_active_material_mass
+    # Molar mass of fully intercalated cathode material
+    full_mol_weight = empty_mol_weight + (interc_weight * e_per_ion)
 
-    else:
-        print("Imported settings did not contain sufficient values to calculate total AM mass.")
-        return 0 # Ensures that future calculations based on this will return NaN
+    # Mass of fully intercalated cathode material
+    full_active_material_mass = active_material_mass * full_mol_weight / starting_mol_weight
+    return full_active_material_mass
 
 def id_to_path(cellid, root_dir='../..'):
     """
@@ -213,7 +215,9 @@ def id_to_path(cellid, root_dir='../..'):
     glob_str = os.path.join('**', '*'+cellid+'*/')
     paths = glob.glob(glob_str, root_dir=root_dir, recursive=True)
     if len(paths) == 1:
-        return paths[0]
+        return os.path.join(root_dir, paths[0])
+    elif len(paths) == 0:
+        print("No paths matched")
     else:
         print(f"Too many paths matched: {paths}")
     
