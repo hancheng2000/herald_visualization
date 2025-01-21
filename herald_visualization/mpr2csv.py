@@ -6,7 +6,7 @@ import glob
 import re
 import os
 import sys
-import navani.echem as ec
+import herald_visualization.echem as ec
 
 # Functions
 def append_import_to_df(df, filename, offset_flags=''):
@@ -27,7 +27,7 @@ def append_import_to_df(df, filename, offset_flags=''):
 
     # Files larger than this many bytes will throw a warning when being imported
     # giving the opportunity to abort analysis
-    filesize_warn_threshold = 100e6
+    filesize_warn_threshold = 200e6
 
     filesize = os.stat(filename).st_size
     if filesize > filesize_warn_threshold:
@@ -249,10 +249,12 @@ def cycle_mpr2csv(
         area = None
         if 'active_material_mass' in cell_props.keys():
             mass = cell_props['active_material_mass']
+            full_mass = total_AM_mass(cell_props)
         if 'surface_area' in cell_props.keys():
             area = cell_props['surface_area']
         df = ec.df_post_process(df, 
-                                mass=mass, 
+                                mass=mass,
+                                full_mass=full_mass, 
                                 area=area)
     else:
         print(f"No cell properties imported.")
@@ -274,19 +276,19 @@ def cycle_mpr2csv(
         cycle_summary.to_csv(cycle_summary_csv_filename)
         print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
         
-    # Print cell metrics
-    number_of_cycles = len(cycle_summary)
-    print(f"Number of cycles: {number_of_cycles}")
-    print(f"UCV (1st cycle): {cycle_summary.iloc[0]['UCV']}")
-    print(f"LCV (1st cycle): {cycle_summary.iloc[0]['LCV']}")
+    # # Print cell metrics
+    # number_of_cycles = len(cycle_summary)
+    # print(f"Number of cycles: {number_of_cycles}")
+    # print(f"UCV (1st cycle): {cycle_summary.iloc[0]['UCV']}")
+    # print(f"LCV (1st cycle): {cycle_summary.iloc[0]['LCV']}")
     
-    if cell_props:
-        print(f"Spec. cap. (1st cycle, cathode AM): {cycle_summary.iloc[0]['Specific Discharge Capacity']}")
-        print(f"GED (1st cycle, cathode AM): {cycle_summary.iloc[0]['Specific Discharge Energy']}")
-        # Some metrics can only be determined if there are at least 2 cycles in the test
-        if number_of_cycles >= 2:
-            print(f"Cycle stability (2nd discharge energy/1st discharge energy): {cycle_summary.iloc[1]['Specific Discharge Energy']/cycle_summary.iloc[0]['Specific Discharge Energy']}")
-            print(f"Discharge efficiency (1st discharge energy/2nd charge energy): {cycle_summary.iloc[0]['Specific Discharge Energy']/cycle_summary.iloc[1]['Specific Charge Energy']}")
+    # if cell_props:
+    #     print(f"Spec. cap. (1st cycle, cathode AM): {cycle_summary.iloc[0]['Specific Discharge Capacity']}")
+    #     print(f"GED (1st cycle, cathode AM): {cycle_summary.iloc[0]['Specific Discharge Energy']}")
+    #     # Some metrics can only be determined if there are at least 2 cycles in the test
+    #     if number_of_cycles >= 2:
+    #         print(f"Cycle stability (2nd discharge energy/1st discharge energy): {cycle_summary.iloc[1]['Specific Discharge Energy']/cycle_summary.iloc[0]['Specific Discharge Energy']}")
+    #         print(f"Discharge efficiency (1st discharge energy/2nd charge energy): {cycle_summary.iloc[0]['Specific Discharge Energy']/cycle_summary.iloc[1]['Specific Charge Energy']}")
     
     os.chdir(home_dir)
     return df

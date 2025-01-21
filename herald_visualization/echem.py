@@ -170,13 +170,14 @@ def echem_file_loader(filepath, mass=None, area=None):
 
     return df
 
-def df_post_process(df, mass=None, area=None):
+def df_post_process(df, mass=None, full_mass=None, area=None):
     """
     Adds columns to an imported dataframe for full cycles, power, and areal/specific versions of capacity, current, and power.
 
     Args:
         df (pandas.DataFrame): The input DataFrame containing the imported data.
-        mass (float): Mass (in mg) to normalize by for specific values
+        mass (float): Mass (in mg) of starting cathode material
+        full_mass (float): Mass (in mg) of fully discharged (e.g. lithiated) cathode
         area (float): Area (in cm^2) to normalize by for areal values
 
     Returns:
@@ -193,7 +194,7 @@ def df_post_process(df, mass=None, area=None):
         elif initial_state == 0: # Cell starts in charge
             df['full cycle'] = (df['half cycle']/2).apply(np.ceil)
         else:
-            raise Exception('Unexpected state in the first data point of half cycle 1.')
+            raise Exception("Unexpected state in the first data point of half cycle 1.")
 
     # Adding a power column
     if 'Current' and 'Voltage' in df.columns:
@@ -202,15 +203,15 @@ def df_post_process(df, mass=None, area=None):
     # Adding mass- and area-normalized columns if mass and area are provided
     if mass:
         df['Specific Capacity'] = 1000*df['Capacity']/mass
+        df['Specific Current'] = 1000*df['Current']/mass
+        df['Specific Power'] = 1000*df['Power']/mass
+    if full_mass:
+        df['Specific Capacity AM'] = 1000*df['Capacity']/full_mass
+        df['Specific Current AM'] = 1000*df['Current']/full_mass
+        df['Specific Power AM'] = 1000*df['Power']/full_mass        
     if area:
         df['Areal Capacity'] = df['Capacity']/area
-    if mass and 'Current' in df.columns:
-        df['Specific Current'] = 1000*df['Current']/mass
-    if area and 'Current' in df.columns:
         df['Areal Current'] = df['Current']/area
-    if mass and 'Power' in df.columns:
-        df['Specific Power'] = 1000*df['Power']/mass
-    if area and 'Power' in df.columns:
         df['Areal Power'] = df['Power']/area
 
     return df
@@ -651,19 +652,6 @@ def cycle_summary(df, current_label=None):
         summary_df.loc[cha_index, 'Charge Capacity'] = df[cha_mask].groupby('full cycle')['Capacity'].max()
         summary_df['CE'] = summary_df['Discharge Capacity']/summary_df['Charge Capacity']
 
-
-    if 'Specific Capacity' in df.columns:
-        if len(dis_index) > 0:
-            summary_df.loc[dis_index, 'Specific Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Specific Capacity'].max()
-        if len(cha_index) > 0:
-            summary_df.loc[cha_index, 'Specific Charge Capacity'] = df[cha_mask].groupby('full cycle')['Specific Capacity'].max()
-
-    if 'Areal Capacity' in df.columns:
-        if len(dis_index) > 0:
-            summary_df.loc[dis_index, 'Areal Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Areal Capacity'].max()
-        if len(cha_index) > 0:
-            summary_df.loc[cha_index, 'Areal Charge Capacity'] = df[cha_mask].groupby('full cycle')['Areal Capacity'].max()
-
     def energy_integral(capacity, voltage):
         return np.trapz(voltage, capacity)
 
@@ -685,6 +673,24 @@ def cycle_summary(df, current_label=None):
             energy = energy_integral(df[mask]['Capacity'], df[mask]['Voltage'])
             # Add an entry to the summary for each full cycle
             summary_df.loc[cycle, 'Charge Energy'] = energy
+
+    if 'Specific Capacity' in df.columns:
+        if len(dis_index) > 0:
+            summary_df.loc[dis_index, 'Specific Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Specific Capacity'].max()
+        if len(cha_index) > 0:
+            summary_df.loc[cha_index, 'Specific Charge Capacity'] = df[cha_mask].groupby('full cycle')['Specific Capacity'].max()
+
+    if 'Specific Capacity AM' in df.columns:
+        if len(dis_index) > 0:
+            summary_df.loc[dis_index, 'Specific Discharge Capacity AM'] = df[dis_mask].groupby('full cycle')['Specific Capacity AM'].max()
+        if len(cha_index) > 0:
+            summary_df.loc[cha_index, 'Specific Charge Capacity AM'] = df[cha_mask].groupby('full cycle')['Specific Capacity AM'].max()
+
+    if 'Areal Capacity' in df.columns:
+        if len(dis_index) > 0:
+            summary_df.loc[dis_index, 'Areal Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Areal Capacity'].max()
+        if len(cha_index) > 0:
+            summary_df.loc[cha_index, 'Areal Charge Capacity'] = df[cha_mask].groupby('full cycle')['Areal Capacity'].max()
 
     if 'Specific Capacity' in df.columns:
         if len(dis_index) > 0:
