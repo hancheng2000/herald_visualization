@@ -201,15 +201,15 @@ def df_post_process(df, mass=None, full_mass=None, area=None):
         df['Power'] = df['Current']*df['Voltage']
 
     # Adding mass- and area-normalized columns if mass and area are provided
-    if mass:
+    if mass > 0:
         df['Specific Capacity'] = 1000*df['Capacity']/mass
         df['Specific Current'] = 1000*df['Current']/mass
         df['Specific Power'] = 1000*df['Power']/mass
-    if full_mass:
-        df['Specific Capacity AM'] = 1000*df['Capacity']/full_mass
-        df['Specific Current AM'] = 1000*df['Current']/full_mass
-        df['Specific Power AM'] = 1000*df['Power']/full_mass        
-    if area:
+    if full_mass > 0:
+        df['Specific Capacity Total AM'] = 1000*df['Capacity']/full_mass
+        df['Specific Current Total AM'] = 1000*df['Current']/full_mass
+        df['Specific Power Total AM'] = 1000*df['Power']/full_mass        
+    if area > 0:
         df['Areal Capacity'] = df['Capacity']/area
         df['Areal Current'] = df['Current']/area
         df['Areal Power'] = df['Power']/area
@@ -592,7 +592,7 @@ def dqdv_single_cycle(capacity, voltage,
 """
 Processing values by cycle number
 """
-def cycle_summary(df, current_label=None):
+def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
     """
     Computes summary statistics for each full cycle returning a new dataframe
     with the following columns:
@@ -615,6 +615,9 @@ def cycle_summary(df, current_label=None):
     Args:
         df (pandas.DataFrame): The input DataFrame containing the data.
         current_label (str, optional): The label of the current column. Defaults to None and compares to a list of known current labels.
+        mass (float): Mass (in mg) of starting cathode material
+        full_mass (float): Mass (in mg) of fully discharged (e.g. lithiated) cathode
+        area (float): Area (in cm^2) to normalize by for areal values
 
     Returns:
         pandas.DataFrame: The summary DataFrame with the calculated values.
@@ -645,86 +648,97 @@ def cycle_summary(df, current_label=None):
     dis_index = df[dis_mask]['full cycle'].unique()
     if len(dis_index) > 0:
         summary_df.loc[dis_index, 'Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Capacity'].max()
+        dis_cycles = df.loc[df.index[dis_mask]]['half cycle'].unique()
+        for halfcycle in dis_cycles:
+            mask = df['half cycle'] == halfcycle
+            cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
+            energy = np.trapz(df[mask]['Voltage'], df[mask]['Capacity'])
+            # Add an entry to the summary for each full cycle
+            summary_df.loc[cycle, 'Discharge Energy'] = energy
+        if mass > 0:
+            summary_df.loc[cycle, 'Specific Discharge Capacity'] = summary_df.loc[cycle, 'Discharge Capacity']/mass
+            summary_df.loc[cycle, 'Specific Discharge Energy'] = summary_df.loc[cycle, 'Discharge Energy']/mass
+        if full_mass > 0:
+            summary_df.loc[cycle, 'Specific Discharge Capacity Total AM'] = summary_df.loc[cycle, 'Discharge Capacity']/full_mass
+            summary_df.loc[cycle, 'Specific Discharge Energy Total AM'] = summary_df.loc[cycle, 'Discharge Energy']/full_mass
+        if area > 0:
+            summary_df.loc[cycle, 'Areal Discharge Capacity'] = summary_df.loc[cycle, 'Discharge Capacity']/area
+            summary_df.loc[cycle, 'Areal Discharge Energy'] = summary_df.loc[cycle, 'Discharge Energy']/area
 
     cha_mask = df['state'] == 0
     cha_index = df[cha_mask]['full cycle'].unique()
     if len(cha_index) > 0:
         summary_df.loc[cha_index, 'Charge Capacity'] = df[cha_mask].groupby('full cycle')['Capacity'].max()
         summary_df['CE'] = summary_df['Discharge Capacity']/summary_df['Charge Capacity']
-
-    def energy_integral(capacity, voltage):
-        return np.trapz(voltage, capacity)
-
-    # TODO: Optimize/cleanup code flow in this section, try not to repeat integration
-    if len(dis_index) > 0:
-        dis_cycles = df.loc[df.index[dis_mask]]['half cycle'].unique()
-        for halfcycle in dis_cycles:
-            mask = df['half cycle'] == halfcycle
-            cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
-            energy = energy_integral(df[mask]['Capacity'], df[mask]['Voltage'])
-            # Add an entry to the summary for each full cycle
-            summary_df.loc[cycle, 'Discharge Energy'] = energy
-
-    if len(cha_index) > 0:
         cha_cycles = df.loc[df.index[cha_mask]]['half cycle'].unique()
         for halfcycle in cha_cycles:
             mask = df['half cycle'] == halfcycle
             cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
-            energy = energy_integral(df[mask]['Capacity'], df[mask]['Voltage'])
+            energy = np.trapz(df[mask]['Voltage'], df[mask]['Capacity'])
             # Add an entry to the summary for each full cycle
             summary_df.loc[cycle, 'Charge Energy'] = energy
+        if mass > 0:
+            summary_df.loc[cycle, 'Specific Charge Capacity'] = summary_df.loc[cycle, 'Charge Capacity']/mass
+            summary_df.loc[cycle, 'Specific Charge Energy'] = summary_df.loc[cycle, 'Charge Energy']/mass
+        if full_mass > 0:
+            summary_df.loc[cycle, 'Specific Charge Capacity Total AM'] = summary_df.loc[cycle, 'Charge Capacity']/full_mass
+            summary_df.loc[cycle, 'Specific Charge Energy Total AM'] = summary_df.loc[cycle, 'Charge Energy']/full_mass
+        if area > 0:
+            summary_df.loc[cycle, 'Areal Charge Capacity'] = summary_df.loc[cycle, 'Charge Capacity']/area
+            summary_df.loc[cycle, 'Areal Charge Energy'] = summary_df.loc[cycle, 'Charge Energy']/area
 
-    if 'Specific Capacity' in df.columns:
-        if len(dis_index) > 0:
-            summary_df.loc[dis_index, 'Specific Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Specific Capacity'].max()
-        if len(cha_index) > 0:
-            summary_df.loc[cha_index, 'Specific Charge Capacity'] = df[cha_mask].groupby('full cycle')['Specific Capacity'].max()
+    # # TODO: Optimize/cleanup code flow in this section, try not to repeat integration
+    # if 'Specific Capacity' in df.columns:
+    #     if len(dis_index) > 0:
+    #         summary_df.loc[dis_index, 'Specific Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Specific Capacity'].max()
+    #     if len(cha_index) > 0:
+    #         summary_df.loc[cha_index, 'Specific Charge Capacity'] = df[cha_mask].groupby('full cycle')['Specific Capacity'].max()
 
-    if 'Specific Capacity AM' in df.columns:
-        if len(dis_index) > 0:
-            summary_df.loc[dis_index, 'Specific Discharge Capacity AM'] = df[dis_mask].groupby('full cycle')['Specific Capacity AM'].max()
-        if len(cha_index) > 0:
-            summary_df.loc[cha_index, 'Specific Charge Capacity AM'] = df[cha_mask].groupby('full cycle')['Specific Capacity AM'].max()
+    # if 'Specific Capacity AM' in df.columns:
+    #     if len(dis_index) > 0:
+    #         summary_df.loc[dis_index, 'Specific Discharge Capacity AM'] = df[dis_mask].groupby('full cycle')['Specific Capacity AM'].max()
+    #     if len(cha_index) > 0:
+    #         summary_df.loc[cha_index, 'Specific Charge Capacity AM'] = df[cha_mask].groupby('full cycle')['Specific Capacity AM'].max()
 
-    if 'Areal Capacity' in df.columns:
-        if len(dis_index) > 0:
-            summary_df.loc[dis_index, 'Areal Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Areal Capacity'].max()
-        if len(cha_index) > 0:
-            summary_df.loc[cha_index, 'Areal Charge Capacity'] = df[cha_mask].groupby('full cycle')['Areal Capacity'].max()
+    # if 'Areal Capacity' in df.columns:
+    #     if len(dis_index) > 0:
+    #         summary_df.loc[dis_index, 'Areal Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Areal Capacity'].max()
+    #     if len(cha_index) > 0:
+    #         summary_df.loc[cha_index, 'Areal Charge Capacity'] = df[cha_mask].groupby('full cycle')['Areal Capacity'].max()
 
-    if 'Specific Capacity' in df.columns:
-        if len(dis_index) > 0:
-            for halfcycle in dis_cycles:
-                mask = df['half cycle'] == halfcycle
-                cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
-                energy = energy_integral(df[mask]['Specific Capacity'], df[mask]['Voltage'])
-                # Add an entry to the summary for each full cycle
-                summary_df.loc[cycle, 'Specific Discharge Energy'] = energy
+    # if 'Specific Capacity' in df.columns:
+    #     if len(dis_index) > 0:
+    #         for halfcycle in dis_cycles:
+    #             mask = df['half cycle'] == halfcycle
+    #             cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
+    #             energy = energy_integral(df[mask]['Specific Capacity'], df[mask]['Voltage'])
+    #             # Add an entry to the summary for each full cycle
+    #             summary_df.loc[cycle, 'Specific Discharge Energy'] = energy
 
-        if len(cha_index) > 0:
-            for halfcycle in cha_cycles:
-                mask = df['half cycle'] == halfcycle
-                cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
-                energy = energy_integral(df[mask]['Specific Capacity'], df[mask]['Voltage'])
-                # Add an entry to the summary for each full cycle
-                summary_df.loc[cycle, 'Specific Charge Energy'] = energy
+    #     if len(cha_index) > 0:
+    #         for halfcycle in cha_cycles:
+    #             mask = df['half cycle'] == halfcycle
+    #             cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
+    #             energy = energy_integral(df[mask]['Specific Capacity'], df[mask]['Voltage'])
+    #             # Add an entry to the summary for each full cycle
+    #             summary_df.loc[cycle, 'Specific Charge Energy'] = energy
 
-    if 'Areal Capacity' in df.columns:
-        if len(dis_index) > 0:
-            for halfcycle in dis_cycles:
-                mask = df['half cycle'] == halfcycle
-                cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
-                energy = energy_integral(df[mask]['Areal Capacity'], df[mask]['Voltage'])
-                # Add an entry to the summary for each full cycle
-                summary_df.loc[cycle, 'Areal Discharge Energy'] = energy
+    # if 'Areal Capacity' in df.columns:
+    #     if len(dis_index) > 0:
+    #         for halfcycle in dis_cycles:
+    #             mask = df['half cycle'] == halfcycle
+    #             cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
+    #             energy = energy_integral(df[mask]['Areal Capacity'], df[mask]['Voltage'])
+    #             # Add an entry to the summary for each full cycle
+    #             summary_df.loc[cycle, 'Areal Discharge Energy'] = energy
 
-        if len(cha_index) > 0:
-            for halfcycle in cha_cycles:
-                mask = df['half cycle'] == halfcycle
-                cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
-                energy = energy_integral(df[mask]['Areal Capacity'], df[mask]['Voltage'])
-                # Add an entry to the summary for each full cycle
-                summary_df.loc[cycle, 'Areal Charge Energy'] = energy
+    #     if len(cha_index) > 0:
+    #         for halfcycle in cha_cycles:
+    #             mask = df['half cycle'] == halfcycle
+    #             cycle = df['full cycle'][mask].iloc[0] # Full cycle corresponding with this half cycle
+    #             energy = energy_integral(df[mask]['Areal Capacity'], df[mask]['Voltage'])
+    #             # Add an entry to the summary for each full cycle
+    #             summary_df.loc[cycle, 'Areal Charge Energy'] = energy
     
     if 'Discharge Energy' in summary_df.columns and 'Discharge Capacity' in summary_df.columns:
         summary_df['Average Discharge Voltage'] = summary_df['Discharge Energy']/summary_df['Discharge Capacity']
@@ -761,7 +775,7 @@ def charge_discharge_plot(df, cycles, colormap=None, norm=None):
         df (DataFrame): The input dataframe containing the data for plotting.
         full_cycle (int or list of ints): The full cycle number(s) to plot. If an integer is provided, a single cycle will be plotted (charge and discharge). If a list is provided, multiple cycles will be plotted.
         colormap (str, optional): The colormap to use for coloring the cycles. If not provided, a default colormap will be used based on the number of cycles.
-        norm (str, optional): Normalization by 'area' or 'mass', if desired.
+        norm (str, optional): Normalization by 'mass', 'full_mass', or 'area', if desired. 'full_mass' refers to the mass of the cathode AM material and stoichiometric anode material, i.e. fully lithiated cathode.
 
     Returns:
         fig (Figure): The matplotlib Figure object.
@@ -777,12 +791,15 @@ def charge_discharge_plot(df, cycles, colormap=None, norm=None):
     if norm is None:
         capacity_col = 'Capacity'
         capacity_label = 'Capacity / mAh'
+    elif norm == 'mass' and 'Specific Capacity' in df.columns:
+        capacity_col = 'Specific Capacity'
+        capacity_label = 'Specific Capacity / mAh/g cathode'
+    elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
+        capacity_col = 'Specific Capacity Total AM'
+        capacity_label = 'Specific Capacity / mAh/g AM'
     elif norm == 'area' and 'Areal Capacity' in df.columns:
         capacity_col = 'Areal Capacity'
         capacity_label = 'Areal Capacity / mAh/cm$^2$'
-    elif norm == 'mass' and 'Specific Capacity' in df.columns:
-        capacity_col = 'Specific Capacity'
-        capacity_label = 'Specific Capacity / mAh/g'
     else:
         print("Invalid argument for norm or required column not present in df.")
 

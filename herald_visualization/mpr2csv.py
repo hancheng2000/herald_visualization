@@ -271,7 +271,7 @@ def cycle_mpr2csv(
 
     # Export a cycle summary .csv if multiple half cycles are present
     if df['half cycle'].max() >= 1:
-        cycle_summary = ec.cycle_summary(df)
+        cycle_summary = ec.cycle_summary(df, mass=mass, full_mass=full_mass, area=area)
         cycle_summary_csv_filename = os.path.join('outputs', 'cycle_summary.csv')
         cycle_summary.to_csv(cycle_summary_csv_filename)
         print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
