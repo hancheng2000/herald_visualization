@@ -245,13 +245,9 @@ def cycle_mpr2csv(
     df = ec.biologic_processing(df)
     if cell_props:
         print(f"Cell properties: {cell_props}")
-        mass = None
-        area = None
-        if 'active_material_mass' in cell_props.keys():
-            mass = cell_props['active_material_mass']
-            full_mass = total_AM_mass(cell_props)
-        if 'surface_area' in cell_props.keys():
-            area = cell_props['surface_area']
+        mass = cell_props['active_material_mass']
+        full_mass = total_AM_mass(cell_props)
+        area = cell_props['surface_area']
         df = ec.df_post_process(df, 
                                 mass=mass,
                                 full_mass=full_mass, 

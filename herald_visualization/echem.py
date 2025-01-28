@@ -656,14 +656,14 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
             # Add an entry to the summary for each full cycle
             summary_df.loc[cycle, 'Discharge Energy'] = energy
         if mass > 0:
-            summary_df.loc[cycle, 'Specific Discharge Capacity'] = summary_df.loc[cycle, 'Discharge Capacity']/mass
-            summary_df.loc[cycle, 'Specific Discharge Energy'] = summary_df.loc[cycle, 'Discharge Energy']/mass
+            summary_df['Specific Discharge Capacity'] = 1000*summary_df['Discharge Capacity']/mass
+            summary_df['Specific Discharge Energy'] = 1000*summary_df['Discharge Energy']/mass
         if full_mass > 0:
-            summary_df.loc[cycle, 'Specific Discharge Capacity Total AM'] = summary_df.loc[cycle, 'Discharge Capacity']/full_mass
-            summary_df.loc[cycle, 'Specific Discharge Energy Total AM'] = summary_df.loc[cycle, 'Discharge Energy']/full_mass
+            summary_df['Specific Discharge Capacity Total AM'] = 1000*summary_df['Discharge Capacity']/full_mass
+            summary_df['Specific Discharge Energy Total AM'] = 1000*summary_df['Discharge Energy']/full_mass
         if area > 0:
-            summary_df.loc[cycle, 'Areal Discharge Capacity'] = summary_df.loc[cycle, 'Discharge Capacity']/area
-            summary_df.loc[cycle, 'Areal Discharge Energy'] = summary_df.loc[cycle, 'Discharge Energy']/area
+            summary_df['Areal Discharge Capacity'] = summary_df['Discharge Capacity']/area
+            summary_df['Areal Discharge Energy'] = summary_df['Discharge Energy']/area
 
     cha_mask = df['state'] == 0
     cha_index = df[cha_mask]['full cycle'].unique()
@@ -678,14 +678,14 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
             # Add an entry to the summary for each full cycle
             summary_df.loc[cycle, 'Charge Energy'] = energy
         if mass > 0:
-            summary_df.loc[cycle, 'Specific Charge Capacity'] = summary_df.loc[cycle, 'Charge Capacity']/mass
-            summary_df.loc[cycle, 'Specific Charge Energy'] = summary_df.loc[cycle, 'Charge Energy']/mass
+            summary_df['Specific Charge Capacity'] = 1000*summary_df['Charge Capacity']/mass
+            summary_df['Specific Charge Energy'] = 1000*summary_df['Charge Energy']/mass
         if full_mass > 0:
-            summary_df.loc[cycle, 'Specific Charge Capacity Total AM'] = summary_df.loc[cycle, 'Charge Capacity']/full_mass
-            summary_df.loc[cycle, 'Specific Charge Energy Total AM'] = summary_df.loc[cycle, 'Charge Energy']/full_mass
+            summary_df['Specific Charge Capacity Total AM'] = 1000*summary_df['Charge Capacity']/full_mass
+            summary_df['Specific Charge Energy Total AM'] = 1000*summary_df['Charge Energy']/full_mass
         if area > 0:
-            summary_df.loc[cycle, 'Areal Charge Capacity'] = summary_df.loc[cycle, 'Charge Capacity']/area
-            summary_df.loc[cycle, 'Areal Charge Energy'] = summary_df.loc[cycle, 'Charge Energy']/area
+            summary_df['Areal Charge Capacity'] = summary_df['Charge Capacity']/area
+            summary_df['Areal Charge Energy'] = summary_df['Charge Energy']/area
     
     if 'Discharge Energy' in summary_df.columns and 'Discharge Capacity' in summary_df.columns:
         summary_df['Average Discharge Voltage'] = summary_df['Discharge Energy']/summary_df['Discharge Capacity']
