@@ -8,7 +8,7 @@ setup(
     author_email="zhaohc@umich.edu",
     # url="",
     packages=["herald_visualization"],  # Automatically find subpackages
-    install_requires=['numpy','pandas','navani','matplotlib','xmltodict','galvani'],       # Add dependencies here
+    install_requires=['numpy','pandas','matplotlib','xmltodict','galvani'],       # Add dependencies here
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
