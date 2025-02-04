@@ -29,12 +29,15 @@ def multi_file_biologic(filepath, time_offset=0, capacity_offset=0):
     df = pd.DataFrame(data=gal_file.data)
 
     # Offset time and/or capacity to make stitched files continuous
-    df['time/s'] += time_offset
-    df['Q charge/discharge/mA.h'] += capacity_offset
+    if time_offset != 0 or capacity_offset != 0:
+        df['time/s'] += time_offset
+        df['Q charge/discharge/mA.h'] += capacity_offset
+
+    df = biologic_processing(df)
 
     return df
 
-def echem_file_loader(filepath, mass=None, area=None):
+def echem_file_loader(filepath):
     """
     Loads a variety of electrochemical filetypes and tries to construct the most useful measurements in a
     consistent way, with consistent column labels. Outputs a dataframe with the original columns, and these constructed columns:
@@ -46,19 +49,11 @@ def echem_file_loader(filepath, mass=None, area=None):
     - "Capacity": The capacity of the cell, each half cycle it resets to 0 - In general this will be in mAh - however it depends what unit the original file is in - Arbin Ah automatically converted to mAh
     - "Voltage": The voltage of the cell
     - "Current": The current of the cell - In general this will be in mA - however it depends what unit the original file is in
-    - "Specific Capacity": The capacity of the cell divided by the mass of the cell if mass provided
-    - "Areal Capacity": The capacity of the cell divided by the area of the cell if area provided
-    - "Specific Current": The current of the cell divided by the mass of the cell if mass provided
-    - "Areal Current": The current of the cell divided by the area of the cell if area provided
-    - "Specific Power": The power of the cell divided by the mass of the cell if mass provided
-    - "Areal Power": The power of the cell divided by the area of the cell if area provided
     
     From these measurements, everything you want to know about the electrochemistry can be calculated.
     
     Parameters:
         filepath (str): The path to the electrochemical file.
-        mass (float, optional): The mass of the cell. Defaults to None.
-        area (float, optional): The area of the cell. Defaults to None.
     
     Returns:
         pandas.DataFrame: A dataframe with the original columns and the constructed columns.
@@ -164,7 +159,7 @@ def echem_file_loader(filepath, mass=None, area=None):
     # If it's a filetype not seen before raise an error
     else:
         print(extension)
-        raise RuntimeError("Filetype {extension=} not recognised.")
+        raise RuntimeError("Filetype {extension} not recognised.")
 
     df_post_process(df)
 
@@ -185,7 +180,7 @@ def df_post_process(df, mass=None, full_mass=None, area=None):
     """
     # Adding a full cycle column
     # 1 full cycle is charge then discharge; code considers which the test begins with
-    if "half cycle" in df.columns:
+    if 'half cycle' in df.columns:
         # Find the 'state' of the first data point in half cycle 1
         initial_state = df[df['half cycle'] == 1].iloc[0].state
         
@@ -291,14 +286,25 @@ def biologic_processing(df):
             print(x)
             raise ValueError('Unexpected value in current - not a number')
 
-    if "time/s" in df.columns:
-        df["Time"] = df["time/s"]
+    if 'time/s' in df.columns:
+        df['Time'] = df['time/s']
 
-    # Adding current column that galvani can't (sometimes) export for some reason
-    if ('time/s' in df.columns) and ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns):
+    # If current has been correctly exported then we can use that
+    if('I/mA' in df.columns) and ('Q charge/discharge/mA.h' not in df.columns) and ('dQ/mA.h' not in df.columns) and ('Ewe/V' in df.columns):
+        df['Current'] = df['I/mA']
+        df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
+        df['state'] = df['dV'].map(lambda x: bio_state(x))
+
+    elif('<I>/mA' in df.columns) and ('Q charge/discharge/mA.h' not in df.columns) and ('dQ/mA.h' not in df.columns) and ('Ewe/V' in df.columns):
+        df['Current'] = df['<I>/mA']
+        df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
+        df['state'] = df['dV'].map(lambda x: bio_state(x))
+
+    # Otherwise, add the current column that galvani can't (sometimes) export for some reason
+    elif ('time/s' in df.columns) and ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns):
         df['dt'] = np.diff(df['time/s'], prepend=0)
         if 'dQ/mA.h' not in df.columns:
-            df.rename(columns = {'dq/mA.h': 'dQ/mA.h'}, inplace = True)
+            df.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
         df['Current'] = df['dQ/mA.h']/(df['dt']/3600)
 
         if np.isnan(df['Current'].iloc[0]):
@@ -315,17 +321,6 @@ def biologic_processing(df):
             df.loc[df.index[0], 'Current'] = 0
 
         df['state'] = df['Current'].map(lambda x: bio_state(x))
-
-    # If current has been correctly exported then we can use that
-    elif('I/mA' in df.columns) and ('Q charge/discharge/mA.h' not in df.columns) and ('dQ/mA.h' not in df.columns) and ('Ewe/V' in df.columns):
-        df['Current'] = df['I/mA']
-        df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
-        df['state'] = df['dV'].map(lambda x: bio_state(x))
-
-    elif('<I>/mA' in df.columns) and ('Q charge/discharge/mA.h' not in df.columns) and ('dQ/mA.h' not in df.columns) and ('Ewe/V' in df.columns):
-        df['Current'] = df['<I>/mA']
-        df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
-        df['state'] = df['dV'].map(lambda x: bio_state(x))
 
     df['cycle change'] = False
     if 'state' in df.columns:

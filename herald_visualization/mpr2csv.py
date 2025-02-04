@@ -271,20 +271,6 @@ def cycle_mpr2csv(
         cycle_summary_csv_filename = os.path.join('outputs', 'cycle_summary.csv')
         cycle_summary.to_csv(cycle_summary_csv_filename)
         print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
-        
-    # # Print cell metrics
-    # number_of_cycles = len(cycle_summary)
-    # print(f"Number of cycles: {number_of_cycles}")
-    # print(f"UCV (1st cycle): {cycle_summary.iloc[0]['UCV']}")
-    # print(f"LCV (1st cycle): {cycle_summary.iloc[0]['LCV']}")
-    
-    # if cell_props:
-    #     print(f"Spec. cap. (1st cycle, cathode AM): {cycle_summary.iloc[0]['Specific Discharge Capacity']}")
-    #     print(f"GED (1st cycle, cathode AM): {cycle_summary.iloc[0]['Specific Discharge Energy']}")
-    #     # Some metrics can only be determined if there are at least 2 cycles in the test
-    #     if number_of_cycles >= 2:
-    #         print(f"Cycle stability (2nd discharge energy/1st discharge energy): {cycle_summary.iloc[1]['Specific Discharge Energy']/cycle_summary.iloc[0]['Specific Discharge Energy']}")
-    #         print(f"Discharge efficiency (1st discharge energy/2nd charge energy): {cycle_summary.iloc[0]['Specific Discharge Energy']/cycle_summary.iloc[1]['Specific Charge Energy']}")
     
     os.chdir(home_dir)
     return df
