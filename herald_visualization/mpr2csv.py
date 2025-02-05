@@ -217,9 +217,9 @@ def id_to_path(cellid, root_dir='../..'):
     if len(paths) == 1:
         return os.path.join(root_dir, paths[0])
     elif len(paths) == 0:
-        print("No paths matched")
+        print(f"No paths matched for {cellid}")
     else:
-        print(f"Too many paths matched: {paths}")
+        print(f"Too many paths matched for {cellid}: {paths}")
     
 # convert all relevant data to .csv
 def cycle_mpr2csv(

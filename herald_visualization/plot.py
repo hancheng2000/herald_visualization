@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os, glob
 import numpy as np
+import herald_visualization.echem as ec
 
 default_params = {# 'axes.labelsize': 'x-large',
 #               'axes.titlesize': 'x-large',
@@ -257,6 +258,71 @@ def plot_eis(
     plt.tight_layout()
     if save_png:
         plt.savefig(png_filename,dpi=300)
+    return fig, ax
+
+def multi_df_dqdv_plot(dfs, labels, 
+    cycle=1,
+    colormap='tab10', 
+    capacity_label='Capacity', 
+    voltage_label='Voltage',
+    polynomial_spline=3, s_spline=1e-5,
+    polyorder_1 = 5, window_size_1=101,
+    polyorder_2 = 5, window_size_2=1001,
+    final_smooth=True):
+    """
+    Plot multiple dQ/dV cycles on the same plot with a colormap.
+    Uses the internal dqdv_single_cycle function to calculate the dQ/dV curves.
+
+    Parameters:
+        df: DataFrame containing the data.
+        cycles: List or array-like object of cycle numbers to plot.
+        colormap: Name of the colormap to use (default: 'viridis').
+        capacity_label: Label of the capacity column in the DataFrame (default: 'Capacity').
+        voltage_label: Label of the voltage column in the DataFrame (default: 'Voltage').
+        polynomial_spline (int, optional): Order of the spline interpolation for the capacity-voltage curve. Defaults to 3. Best results use odd numbers.
+        s_spline (float, optional): Smoothing factor for the spline interpolation. Defaults to 1e-5.
+        polyorder_1 (int, optional): Order of the polynomial for the first smoothing filter (Before spline fitting). Defaults to 5. Best results use odd numbers.
+        window_size_1 (int, optional): Size of the window for the first smoothing filter. (Before spline fitting). Defaults to 101. Must be odd.
+        polyorder_2 (int, optional): Order of the polynomial for the second optional smoothing filter. Defaults to 5. (After spline fitting and differentiation). Best results use odd numbers.
+        window_size_2 (int, optional): Size of the window for the second optional smoothing filter. Defaults to 1001. (After spline fitting and differentiation). Must be odd.
+        final_smooth (bool, optional): Whether to apply final smoothing to the dq/dv curve. Defaults to True.
+
+    Returns:
+        fig: The matplotlib figure object.
+        ax: The matplotlib axes object.
+
+    """
+    import matplotlib.cm as cm
+    from matplotlib.colors import Normalize
+
+    fig, ax = plt.subplots() 
+    cm = plt.get_cmap(colormap)
+
+    for i, df in enumerate(dfs):
+        halfcycles = ec.halfcycles_from_cycle(df, cycle)
+        for halfcycle in halfcycles:
+            df_cycle = df[df['half cycle'] == halfcycle]
+            voltage, dqdv, _ = ec.dqdv_single_cycle(df_cycle[capacity_label],
+                                        df_cycle[voltage_label], 
+                                        window_size_1=window_size_1,
+                                        polyorder_1=polyorder_1,
+                                        polynomial_spline=polynomial_spline,
+                                        s_spline=s_spline,
+                                        window_size_2=window_size_2,
+                                        polyorder_2=polyorder_2,
+                                        final_smooth=final_smooth)
+            # Hackery to make only one instance of each df appear in the legend
+            if halfcycle % 2 == 0:
+                label = labels[i]
+            else:
+                label = '_'
+            ax.plot(voltage, dqdv, color=cm(i), label=label)
+
+    ax.set_xlabel('Voltage / V')
+    y_labels = {'Capacity': 'dQ/dV / mAh/V', 'Specific Capacity': 'dQ/dV / mAh/g/V'}
+    ax.set_ylabel(y_labels[capacity_label])
+    ax.axhline(0, linewidth=2, color='k')
+    fig.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     return fig, ax
 
 

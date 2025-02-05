@@ -165,7 +165,7 @@ def echem_file_loader(filepath):
 
     return df
 
-def df_post_process(df, mass=None, full_mass=None, area=None):
+def df_post_process(df, mass=0, full_mass=0, area=0):
     """
     Adds columns to an imported dataframe for full cycles, power, and areal/specific versions of capacity, current, and power.
 
