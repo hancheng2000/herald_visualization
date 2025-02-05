@@ -260,7 +260,8 @@ def plot_eis(
         plt.savefig(png_filename,dpi=300)
     return fig, ax
 
-def multi_df_dqdv_plot(dfs, labels, 
+def multi_df_dqdv_plot(dfs, labels,
+    halfcycles=None,
     cycle=1,
     colormap='tab10', 
     capacity_label='Capacity', 
@@ -275,7 +276,9 @@ def multi_df_dqdv_plot(dfs, labels,
 
     Parameters:
         df: DataFrame containing the data.
-        cycles: List or array-like object of cycle numbers to plot.
+        labels: List of labels to make legend.
+        halfcycles (list): Half cycles to plot. Will override cycle.
+        cycle (int): Cycle number to plot.
         colormap: Name of the colormap to use (default: 'viridis').
         capacity_label: Label of the capacity column in the DataFrame (default: 'Capacity').
         voltage_label: Label of the voltage column in the DataFrame (default: 'Voltage').
@@ -299,7 +302,11 @@ def multi_df_dqdv_plot(dfs, labels,
     cm = plt.get_cmap(colormap)
 
     for i, df in enumerate(dfs):
-        halfcycles = ec.halfcycles_from_cycle(df, cycle)
+        # If halfcycles arg is supplied, use that to determine what to plot
+        # Otherwise use cycle to define the halfcycles to plot
+        if not isinstance(halfcycles, list): # Will evaluate True if halfcycles is left as None or is not a valid list
+            halfcycles = ec.halfcycles_from_cycle(df, cycle)
+
         for halfcycle in halfcycles:
             df_cycle = df[df['half cycle'] == halfcycle]
             voltage, dqdv, _ = ec.dqdv_single_cycle(df_cycle[capacity_label],
@@ -311,8 +318,9 @@ def multi_df_dqdv_plot(dfs, labels,
                                         window_size_2=window_size_2,
                                         polyorder_2=polyorder_2,
                                         final_smooth=final_smooth)
-            # Hackery to make only one instance of each df appear in the legend
-            if halfcycle % 2 == 0:
+            
+            # Make sure only one instance of each df appears in the legend
+            if halfcycle == halfcycles[0]:
                 label = labels[i]
             else:
                 label = '_'
