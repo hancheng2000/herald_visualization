@@ -4,11 +4,8 @@ import os, glob
 import numpy as np
 import herald_visualization.echem as ec
 
-default_params = {# 'axes.labelsize': 'x-large',
-#               'axes.titlesize': 'x-large',
-#               'xtick.labelsize': 'x-large',
-#               'ytick.labelsize': 'x-large',
-              'font.family': 'serif',
+default_params = {
+              'font.family': 'Helvetica',
               'axes.labelsize': 20,
               'axes.labelweight': 'bold',  # Make axes labels bold
               'xtick.labelsize': 18,
@@ -31,6 +28,13 @@ default_params = {# 'axes.labelsize': 'x-large',
               'legend.frameon': True
     }
 
+capacity_col_to_label = {
+    'Capacity': 'Capacity / mAh',
+    'Specific Capacity': 'Specific Capacity / mAh/g cathode',
+    'Specific Capacity Total AM': 'Specific Capacity / mAh/g AM',
+    'Areal Capacity': 'Areal Capacity / mAh/cm$^2$'
+}
+
 def plot_gitt(
         dir_name,
         fig=None,
@@ -46,7 +50,7 @@ def plot_gitt(
         plt.rcParams.update(plt_params)
     else:
         plt.rcParams.update(default_params)
-    df, df_sum, full_cycles, half_cycles = parse_csv(dir_name,full_cycles,half_cycles)
+    df, df_sum, _ = parse_cycle_csv(dir_name)
     if fig == None and ax == None:
         fig, ax = plt.subplots()
     colors = plt.cm.rainbow(np.linspace(0,1.0,len(full_cycles)*2))
@@ -260,7 +264,7 @@ def plot_eis(
         plt.savefig(png_filename,dpi=300)
     return fig, ax
 
-def multi_df_dqdv_plot(dfs, labels,
+def multi_cell_dqdv_plot(dfs, labels,
     halfcycles=None,
     cycle=1,
     colormap='tab10', 
@@ -334,22 +338,18 @@ def multi_df_dqdv_plot(dfs, labels,
     return fig, ax
 
 
-def parse_csv(
-    dir_name,
-    full_cycles = None,
-    half_cycles = None,   
-):
+def parse_cycle_csv(dir_name,
+                    summary_filename='cycle_summary'):
     csv_files = glob.glob(os.path.join(dir_name,'*.csv'))
-    print(csv_files)
-    summary_file = os.path.join(dir_name,'cycle_summary.csv')
-    data_file = [file for file in csv_files if 'cycle_summary' not in file][0]
+    summary_file = os.path.join(dir_name,f'{summary_filename}.csv')
+    data_file = [file for file in csv_files if summary_filename not in file and 'PEIS' not in file][0]
     df = pd.read_csv(data_file)
-    df_sum = pd.read_csv(summary_file)
-    # if full cycle is not specified, use all cycles
-    # only plot half cycles when half cycle is specified and full cycle is not specified
-    if full_cycles == None and half_cycles == None:
-        full_cycles = df_sum['full cycle'].tolist()
-        half_cycles = df['half cycle'].unique().tolist()
-    elif full_cycles != None and half_cycles == None:
-        half_cycles = df['half cycle'].unique().tolist()
-    return df, df_sum, full_cycles, half_cycles
+    try:
+        df_sum = pd.read_csv(summary_file)
+    except:
+        df_sum = None   
+    try:
+        df_for_dqdv = df[(df['state'] != 'R') & (df['Voltage'] < df_sum.loc[1, 'UCV'] - 0.01)]
+    except:
+        df_for_dqdv = None
+    return df, df_sum, df_for_dqdv
