@@ -37,14 +37,32 @@ capacity_col_to_label = {
 
 def plot_gitt(
         dir_name,
+        norm=None,
         fig=None,
         ax=None,
         full_cycles = None,
         half_cycles = None,
         save_png = False,
         png_filename = None,
-        plt_params = None,
+        plt_params = None
     ):
+
+    # Determine type of capacity to plot, based on value of arg norm
+    if norm is None:
+        capacity_col = 'Capacity'
+        capacity_label = 'Capacity / mAh'
+    elif norm == 'mass' and 'Specific Capacity' in df.columns:
+        capacity_col = 'Specific Capacity'
+        capacity_label = 'Specific Capacity / mAh/g cathode'
+    elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
+        capacity_col = 'Specific Capacity Total AM'
+        capacity_label = 'Specific Capacity / mAh/g AM'
+    elif norm == 'area' and 'Areal Capacity' in df.columns:
+        capacity_col = 'Areal Capacity'
+        capacity_label = 'Areal Capacity / mAh/cm$^2$'
+    else:
+        print("Invalid argument for norm or required column not present in df.")
+
     # plotting params
     if plt_params != None:
         plt.rcParams.update(plt_params)
@@ -60,18 +78,18 @@ def plot_gitt(
         # round the whole df to 4 decimal places
         df1 = df1.round(4)
         # remove 0 specific capacity
-        # df1 = df1[df1['Specific Capacity']!=0]
-        df1['Specific Capacity'] = df1['Specific Capacity'] - df1['Specific Capacity'].min()
+        # df1 = df1[df1[capacity_col]!=0]
+        df1[capacity_col] = df1[capacity_col] - df1[capacity_col].min()
         # remove decreasing specific capacity
-        df1 = df1[df1['Specific Capacity'].cummax() == df1['Specific Capacity']]
+        df1 = df1[df1[capacity_col].cummax() == df1[capacity_col]]
         if cycle == 1:
-            plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle)],label='Cycle 0',linestyle='-')
+            plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle)],label='Cycle 0',linestyle='-')
         else:
             if cycle % 2 == 1:
-                plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle-1)],label='Cycle '+str(int((cycle-1)/2)),linestyle='-')
+                plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle-1)],label='Cycle '+str(int((cycle-1)/2)),linestyle='-')
             else:
-                plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle)],linestyle='-')
-    plt.xlabel('Specific Capacity (mAh/g)-Cathode AM')
+                plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle)],linestyle='-')
+    plt.xlabel(capacity_label)
     plt.ylabel('Voltage vs Li/Li+ (V)')
     plt.legend(frameon=False)
     plt.tight_layout()
@@ -83,13 +101,31 @@ def plot_gitt(
 
 def plot_cycle(
         dir_name,
+        norm=None,
         fig=None,
         ax=None,
         full_cycles = None,
         save_png = False,
         png_filename = None,
-        plt_params = None,
+        plt_params = None
     ):
+
+    # Determine type of capacity to plot, based on value of arg norm
+    if norm is None:
+        capacity_col = 'Capacity'
+        capacity_label = 'Capacity / mAh'
+    elif norm == 'mass' and 'Specific Capacity' in df.columns:
+        capacity_col = 'Specific Capacity'
+        capacity_label = 'Specific Capacity / mAh/g cathode'
+    elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
+        capacity_col = 'Specific Capacity Total AM'
+        capacity_label = 'Specific Capacity / mAh/g AM'
+    elif norm == 'area' and 'Areal Capacity' in df.columns:
+        capacity_col = 'Areal Capacity'
+        capacity_label = 'Areal Capacity / mAh/cm$^2$'
+    else:
+        print("Invalid argument for norm or required column not present in df.")
+
     # plotting params
     if plt_params != None:
         plt.rcParams.update(plt_params)
@@ -112,12 +148,12 @@ def plot_cycle(
         # round the whole df to 4 decimal places
         df1 = df1.round(4)
         # remove 0 specific capacity
-        # df1 = df1[df1['Specific Capacity']!=0]
-        df1['Specific Capacity'] = df1['Specific Capacity'] - df1['Specific Capacity'].min()
+        # df1 = df1[df1[capacity_col]!=0]
+        df1[capacity_col] = df1[capacity_col] - df1[capacity_col].min()
         # remove decreasing specific capacity
-        df1 = df1[df1['Specific Capacity'].cummax() == df1['Specific Capacity']]
-        plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle)],label=f'Cycle {cycle}',linestyle='-')
-    plt.xlabel('Specific Capacity (mAh/g)-Cathode AM')
+        df1 = df1[df1[capacity_col].cummax() == df1[capacity_col]]
+        plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle)],label=f'Cycle {cycle}',linestyle='-')
+    plt.xlabel(capacity_label)
     plt.ylabel('Voltage vs Li/Li+ (V)')
     plt.legend(frameon=False)
     plt.tight_layout()
@@ -129,6 +165,7 @@ def plot_cycle(
 
 def plot_multi_cell(
     file_list,
+    norm=None,
     fig=None, 
     ax=None,
     cycles = 'all',
@@ -150,6 +187,23 @@ def plot_multi_cell(
     """    
     if fig == None and ax == None:
         fig, ax = plt.subplots()
+
+    # Determine type of capacity to plot, based on value of arg norm
+    if norm is None:
+        capacity_col = 'Capacity'
+        capacity_label = 'Capacity / mAh'
+    elif norm == 'mass' and 'Specific Capacity' in df.columns:
+        capacity_col = 'Specific Capacity'
+        capacity_label = 'Specific Capacity / mAh/g cathode'
+    elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
+        capacity_col = 'Specific Capacity Total AM'
+        capacity_label = 'Specific Capacity / mAh/g AM'
+    elif norm == 'area' and 'Areal Capacity' in df.columns:
+        capacity_col = 'Areal Capacity'
+        capacity_label = 'Areal Capacity / mAh/cm$^2$'
+    else:
+        print("Invalid argument for norm or required column not present in df.")
+
     dfs = []
     for file in file_list:
         dfs.append(pd.read_csv(file))
@@ -172,13 +226,13 @@ def plot_multi_cell(
             # round the whole df to 4 decimal places
             df1 = df1.round(4)
             # remove 0 specific capacity
-            # df1 = df1[df1['Specific Capacity']!=0]
-            df1['Specific Capacity'] = df1['Specific Capacity'] - df1['Specific Capacity'].min()
+            # df1 = df1[df1[capacity_col]!=0]
+            df1[capacity_col] = df1[capacity_col] - df1[capacity_col].min()
             # remove decreasing specific capacity
-            df1 = df1[df1['Specific Capacity'].cummax() == df1['Specific Capacity']]
-            plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[colors_i],label='Cell '+str(i+1)+' Cycle '+str(int((cycle+1)/2)),linestyle='-')
+            df1 = df1[df1[capacity_col].cummax() == df1[capacity_col]]
+            plt.plot(df1[capacity_col],df1['Voltage'],color=colors[colors_i],label='Cell '+str(i+1)+' Cycle '+str(int((cycle+1)/2)),linestyle='-')
             colors_i += 1
-    plt.xlabel('Specific Capacity (mAh/g cathode AM)')
+    plt.xlabel(capacity_label)
     plt.ylabel('Voltage (V)')
     plt.tight_layout()
     if save_png:
@@ -188,6 +242,7 @@ def plot_multi_cell(
 
 def plot_ocv(
         dir_name,
+        norm=None,
         fig=None,
         ax=None,
         full_cycles = None,
@@ -196,6 +251,23 @@ def plot_ocv(
         png_filename = None,
         plt_params = None,
     ):
+
+    # Determine type of capacity to plot, based on value of arg norm
+    if norm is None:
+        capacity_col = 'Capacity'
+        capacity_label = 'Capacity / mAh'
+    elif norm == 'mass' and 'Specific Capacity' in df.columns:
+        capacity_col = 'Specific Capacity'
+        capacity_label = 'Specific Capacity / mAh/g cathode'
+    elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
+        capacity_col = 'Specific Capacity Total AM'
+        capacity_label = 'Specific Capacity / mAh/g AM'
+    elif norm == 'area' and 'Areal Capacity' in df.columns:
+        capacity_col = 'Areal Capacity'
+        capacity_label = 'Areal Capacity / mAh/cm$^2$'
+    else:
+        print("Invalid argument for norm or required column not present in df.")
+
     # plotting params
     if plt_params != None:
         plt.rcParams.update(plt_params)
@@ -209,17 +281,17 @@ def plot_ocv(
         df1 = df[df['half cycle']==cycle]
         # round the whole df to 4 decimal places
         df1 = df1.round(4)
-        df1['Specific Capacity'] = df1['Specific Capacity'] - df1['Specific Capacity'].min()
+        df1[capacity_col] = df1[capacity_col] - df1[capacity_col].min()
         # remove decreasing specific capacity
-        df1 = df1[df1['Specific Capacity'].cummax() == df1['Specific Capacity']]
+        df1 = df1[df1[capacity_col].cummax() == df1[capacity_col]]
         # get the ocv through 'state' column, "R" for OCV
         df1 = df1[df1['state']=='R']
-        df1 = df1.groupby('Specific Capacity').max().reset_index()
+        df1 = df1.groupby(capacity_col).max().reset_index()
         if cycle % 2 == 1: 
-            plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle)],label='Cycle '+str(int((cycle-1)/2)) + 'OCV',linestyle='-')
+            plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle)],label='Cycle '+str(int((cycle-1)/2)) + 'OCV',linestyle='-')
         else:
-            plt.plot(df1['Specific Capacity'],df1['Voltage'],color=colors[int(cycle-1)],linestyle='--')
-    plt.xlabel('Specific Capacity (mAh/g)-Cathode AM')
+            plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle-1)],linestyle='--')
+    plt.xlabel(capacity_label)
     plt.ylabel('Voltage vs Li/Li+ (V)')
     plt.legend(frameon=False)
     plt.tight_layout()
