@@ -1,8 +1,10 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import os, glob
 import numpy as np
 import herald_visualization.echem as ec
+from herald_visualization.echem import halfcycles_from_cycle, cycle_from_halfcycle
 
 default_params = {
               'font.family': 'Helvetica',
@@ -28,11 +30,16 @@ default_params = {
               'legend.frameon': True
     }
 
+def subscript_formulas(text):
+    pattern = r'([A-Z][a-z]*)(\d)'
+    replacement = r'\1$_{\2}$'
+    return re.sub(pattern, replacement, text)
+
 capacity_col_to_label = {
-    'Capacity': 'Capacity / mAh',
-    'Specific Capacity': 'Specific Capacity / mAh/g cathode',
-    'Specific Capacity Total AM': 'Specific Capacity / mAh/g AM',
-    'Areal Capacity': 'Areal Capacity / mAh/cm$^2$'
+    'Capacity': 'Capacity (mAh)',
+    'Specific Capacity': 'Specific Capacity (mAh/g cathode)',
+    'Specific Capacity Total AM': 'Specific Capacity (mAh/g AM)',
+    'Areal Capacity': 'Areal Capacity (mAh/cm$^2$)'
 }
 
 def plot_gitt(
@@ -47,7 +54,14 @@ def plot_gitt(
         plt_params = None
     ):
 
-    # Determine type of capacity to plot, based on value of arg norm
+    # plotting params
+    if plt_params != None:
+        plt.rcParams.update(plt_params)
+    else:
+        plt.rcParams.update(default_params)
+    df, df_sum, _ = parse_cycle_csv(dir_name)
+
+        # Determine type of capacity to plot, based on value of arg norm
     if norm is None:
         capacity_col = 'Capacity'
         capacity_label = 'Capacity / mAh'
@@ -63,12 +77,6 @@ def plot_gitt(
     else:
         print("Invalid argument for norm or required column not present in df.")
 
-    # plotting params
-    if plt_params != None:
-        plt.rcParams.update(plt_params)
-    else:
-        plt.rcParams.update(default_params)
-    df, df_sum, _ = parse_cycle_csv(dir_name)
     if fig == None and ax == None:
         fig, ax = plt.subplots()
     colors = plt.cm.rainbow(np.linspace(0,1.0,len(full_cycles)*2))
@@ -110,6 +118,18 @@ def plot_cycle(
         plt_params = None
     ):
 
+    # plotting params
+    if plt_params != None:
+        plt.rcParams.update(plt_params)
+    else:
+        plt.rcParams.update(default_params)
+    csv_files = glob.glob(os.path.join(dir_name,'*.csv'))
+    print(csv_files)
+    summary_file = os.path.join(dir_name,'cycle_summary.csv')
+    data_file = [file for file in csv_files if 'cycle_summary' not in file][0]
+    df = pd.read_csv(data_file)
+    df_sum = pd.read_csv(summary_file)
+
     # Determine type of capacity to plot, based on value of arg norm
     if norm is None:
         capacity_col = 'Capacity'
@@ -126,17 +146,6 @@ def plot_cycle(
     else:
         print("Invalid argument for norm or required column not present in df.")
 
-    # plotting params
-    if plt_params != None:
-        plt.rcParams.update(plt_params)
-    else:
-        plt.rcParams.update(default_params)
-    csv_files = glob.glob(os.path.join(dir_name,'*.csv'))
-    print(csv_files)
-    summary_file = os.path.join(dir_name,'cycle_summary.csv')
-    data_file = [file for file in csv_files if 'cycle_summary' not in file][0]
-    df = pd.read_csv(data_file)
-    df_sum = pd.read_csv(summary_file)
     # if full cycle is not specified, use all cycles
     if full_cycles == None:
         full_cycles = df_sum['full cycle'].tolist()
@@ -188,22 +197,6 @@ def plot_multi_cell(
     if fig == None and ax == None:
         fig, ax = plt.subplots()
 
-    # Determine type of capacity to plot, based on value of arg norm
-    if norm is None:
-        capacity_col = 'Capacity'
-        capacity_label = 'Capacity / mAh'
-    elif norm == 'mass' and 'Specific Capacity' in df.columns:
-        capacity_col = 'Specific Capacity'
-        capacity_label = 'Specific Capacity / mAh/g cathode'
-    elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
-        capacity_col = 'Specific Capacity Total AM'
-        capacity_label = 'Specific Capacity / mAh/g AM'
-    elif norm == 'area' and 'Areal Capacity' in df.columns:
-        capacity_col = 'Areal Capacity'
-        capacity_label = 'Areal Capacity / mAh/cm$^2$'
-    else:
-        print("Invalid argument for norm or required column not present in df.")
-
     dfs = []
     for file in file_list:
         dfs.append(pd.read_csv(file))
@@ -220,6 +213,23 @@ def plot_multi_cell(
     colors = plt.cm.rainbow(np.linspace(0,1.0,n_cycles))
     colors_i = 0
     for i, df in enumerate(dfs):
+
+        # Determine type of capacity to plot, based on value of arg norm
+        if norm is None:
+            capacity_col = 'Capacity'
+            capacity_label = 'Capacity / mAh'
+        elif norm == 'mass' and 'Specific Capacity' in df.columns:
+            capacity_col = 'Specific Capacity'
+            capacity_label = 'Specific Capacity / mAh/g cathode'
+        elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
+            capacity_col = 'Specific Capacity Total AM'
+            capacity_label = 'Specific Capacity / mAh/g AM'
+        elif norm == 'area' and 'Areal Capacity' in df.columns:
+            capacity_col = 'Areal Capacity'
+            capacity_label = 'Areal Capacity / mAh/cm$^2$'
+        else:
+            print("Invalid argument for norm or required column not present in df.")
+
         cycles_to_plot = cycles[i]
         for cycle in cycles_to_plot:
             df1 = df[df['full cycle']==cycle]
@@ -252,7 +262,14 @@ def plot_ocv(
         plt_params = None,
     ):
 
-    # Determine type of capacity to plot, based on value of arg norm
+    # plotting params
+    if plt_params != None:
+        plt.rcParams.update(plt_params)
+    else:
+        plt.rcParams.update(default_params)
+    df, df_sum, full_cycles, half_cycles = parse_csv(dir_name,full_cycles,half_cycles)
+
+        # Determine type of capacity to plot, based on value of arg norm
     if norm is None:
         capacity_col = 'Capacity'
         capacity_label = 'Capacity / mAh'
@@ -268,12 +285,6 @@ def plot_ocv(
     else:
         print("Invalid argument for norm or required column not present in df.")
 
-    # plotting params
-    if plt_params != None:
-        plt.rcParams.update(plt_params)
-    else:
-        plt.rcParams.update(default_params)
-    df, df_sum, full_cycles, half_cycles = parse_csv(dir_name,full_cycles,half_cycles)
     if fig == None and ax == None:
         fig, ax = plt.subplots()
     colors = plt.cm.rainbow(np.linspace(0,1.0,len(full_cycles)*2))
@@ -403,7 +414,7 @@ def multi_cell_dqdv_plot(dfs, labels,
             ax.plot(voltage, dqdv, color=cm(i), label=label)
 
     ax.set_xlabel('Voltage / V')
-    y_labels = {'Capacity': 'dQ/dV / mAh/V', 'Specific Capacity': 'dQ/dV / mAh/g/V'}
+    y_labels = {'Capacity': 'dQ/dV (mAh/V)', 'Specific Capacity': 'dQ/dV (mAh/g/V)', 'Specific Capacity Total AM': 'dQ/dV (mAh/g/V)'}
     ax.set_ylabel(y_labels[capacity_label])
     ax.axhline(0, linewidth=2, color='k')
     fig.legend(loc='center left', bbox_to_anchor=(1, 0.5))
@@ -415,7 +426,7 @@ def parse_cycle_csv(dir_name,
     csv_files = glob.glob(os.path.join(dir_name,'*.csv'))
     summary_file = os.path.join(dir_name,f'{summary_filename}.csv')
     data_file = [file for file in csv_files if summary_filename not in file and 'PEIS' not in file][0]
-    df = pd.read_csv(data_file)
+    df = pd.read_csv(data_file, low_memory=False)
     try:
         df_sum = pd.read_csv(summary_file)
     except:
@@ -425,3 +436,110 @@ def parse_cycle_csv(dir_name,
     except:
         df_for_dqdv = None
     return df, df_sum, df_for_dqdv
+
+# NEW PLOT FUNCTIONS
+
+def plot_cycling(
+        dfs,
+        cycles='all',
+        labels=None,
+        colormap=None,
+        capacity_col='Capacity',
+        voltage_col='Voltage',
+        fig=None,
+        ax=None,
+        subplots_kwargs={},
+        plot_kwargs={}
+):
+    """
+    Plot voltage vs. capacity cycling data from one or more cells.
+
+    Arguments:
+    - dfs (pandas.DataFrame or dict of pandas.DataFrame): dataframe(s) to plot, e.g. from parse_cycle_csv
+    - halfcycles (list, opt): halfcycles to plot, overrides cycles
+    - cycles (list): full cycles to plot, 'all' plots all cycles in df
+    - colormap: colormap to use for plot
+    - capacity_col: column in dfs to plot as x-axis
+    - voltage_col: column in dfs to plot as y-axis
+    """
+
+    # TODO add functionality to select specific half cycles
+
+    if fig == None and ax == None:
+        fig, ax = plt.subplots(**subplots_kwargs)
+    
+    def colormap_picker(number_of_plots):
+        if not colormap:
+            if number_of_plots <= 10:
+                return plt.get_cmap('tab10')
+            elif number_of_plots <= 20:
+                return plt.get_cmap('tab20')
+            else:
+                raise ValueError("Too many plots for default colormaps.")
+        else:
+            return plt.get_cmap(colormap)
+
+    # Function can handle either multiple dfs or multiple cycles
+    multi_df_bool = isinstance(dfs, dict) and len(dfs) > 1
+    multi_cycle_bool = (isinstance(cycles, list) and len(cycles) > 1) or cycles == 'all'
+    if multi_df_bool and multi_cycle_bool:
+        raise NotImplementedError("Either multiple cells or multiple cycles may be plotted.")
+    
+    # Plot multiple cycles for one df
+    elif multi_cycle_bool:
+        df = dfs.values[0] if isinstance(dfs, dict) else dfs
+        if cycles == 'all':
+            cycles = df['full cycle'].unique()
+        else:
+            cycles = list(cycles) # Ensure that cycles is a list, even if an int is passed
+        cm = colormap_picker(len(cycles))
+        custom_lines = [Line2D([0], [0], color=cm(i), lw=2) for i, _ in enumerate(cycles)]
+        if not labels: # Automatically set labels based on cycle numbers if none are provided
+            labels = [f'Cycle {n}' for n in cycles]
+        for i, cycle in enumerate(cycles):
+            halfcycles = halfcycles_from_cycle(df, cycle)
+            for halfcycle in halfcycles:
+                mask = df['half cycle'] == halfcycle
+                df1 = df.loc[mask]
+                # Remove points from OCV at the beginning of the half cycle
+                df1 = df1.loc[df1['Specific Capacity']!=0]
+                # Make sure half cycle exists within the data
+                if sum(mask) > 0:
+                    lab = labels[i] if labels else ''
+                    ax.plot(df1[capacity_col], df1[voltage_col], color=cm(i), label=lab, **plot_kwargs)
+
+    # Plot one cycle for one or multiple dfs
+    else:
+        cycle = cycles[0] if isinstance(cycles, list) else cycles
+        dfs = dfs if isinstance(dfs, dict) else {'_': dfs} # Ensure that dfs is a dict, even if a dataframe is passed
+        cm = colormap_picker(len(dfs))
+        custom_lines = [Line2D([0], [0], color=cm(i), lw=2) for i, _ in enumerate(dfs)]
+        if not labels: # Automatically set labels based on dict keys if none are provided
+            labels = list(dfs.keys())
+        for i, df in enumerate(dfs.values()):
+            halfcycles = halfcycles_from_cycle(df, cycle)
+            for halfcycle in halfcycles:
+                mask = df['half cycle'] == halfcycle
+                df1 = df.loc[mask]
+                # Remove points from OCV at the beginning of the half cycle
+                df1 = df1.loc[df1['Specific Capacity']!=0]
+                # Make sure half cycle exists within the data
+                if sum(mask) > 0:
+                    lab = labels[i] if labels else ''
+                    ax.plot(df1[capacity_col], df1[voltage_col], color=cm(i), label=lab, **plot_kwargs)
+
+    try:
+        capacity_label = capacity_col_to_label[capacity_col]
+    except KeyError:
+        capacity_label = capacity_col
+    ax.set_xlabel(capacity_label)
+    
+    if voltage_col == 'Voltage':
+        voltage_label = 'Voltage (V)'
+    else:
+        voltage_label = f'{voltage_col} (V)'
+    ax.set_ylabel('Voltage (V)')
+    
+    if labels:
+        ax.legend(custom_lines, labels)
+    return fig, ax
