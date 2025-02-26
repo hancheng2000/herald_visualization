@@ -21,6 +21,18 @@ mpr_col_dict = {'Voltage': 'Ewe/V',
 
 current_labels = ['Current', 'Current(A)', 'I /mA', 'Current/mA', 'I/mA', '<I>/mA']
 
+# Deciding on charge, discharge, and rest based on current direction
+def state_from_current(x):
+    if x > 0:
+        return 1
+    elif x < 0:
+        return -1
+    elif x == 0:
+        return 0
+    else:
+        print(x)
+        raise ValueError('Unexpected value in current - not a number')
+
 def multi_file_biologic(filepath, time_offset=0, capacity_offset=0):
     """
     
@@ -42,7 +54,7 @@ def echem_file_loader(filepath):
     Loads a variety of electrochemical filetypes and tries to construct the most useful measurements in a
     consistent way, with consistent column labels. Outputs a dataframe with the original columns, and these constructed columns:
     
-    - "state": R for rest, 0 for discharge, 1 for charge (defined by the current direction +ve or -ve)
+    - "state": 0 for rest, -1 for discharge, 1 for charge (defined by the current direction +ve or -ve)
     - "half cycle": Counts the half cycles, rests are not included as a half cycle
     - "full cycle": Counts the full cycles, rests are not included as a full cycle
     - "cycle change": Boolean column that is True when the state changes
@@ -142,19 +154,12 @@ def echem_file_loader(filepath):
     # Check for the columns that are expected (Capacity, Voltage, Current, Cycle numbers, state)
     elif extension == '.csv':
         df = pd.read_csv(filepath, 
-                         index_col=0)
+                         index_col=0,
+                         dtype={'Time': np.float64, 'Capacity': np.float64, 'Voltage': np.float64, 'Current': np.float64,
+                                'full cycle': np.int32, 'half cycle': np.int32, 'state': np.int16})
         expected_columns = ['Capacity', 'Voltage', 'half cycle', 'full cycle', 'Current', 'state']
-        if all(col in df.columns for col in expected_columns):
-            # Pandas sometimes reads in the state column as a string - ensure all columns we use are the correct type
-            df['state'] = df['state'].replace('1', 1)
-            df['state'] = df['state'].replace('0', 0)
-            df[['Capacity', 'Voltage', 'Current']] = df[['Capacity', 'Voltage', 'Current']].astype(float)
-            df[['full cycle', 'half cycle']] = df[['full cycle', 'half cycle']].astype(int)
-            pass
-        else:
+        if not all(col in df.columns for col in expected_columns):
             raise ValueError('Columns do not match expected columns for navani processed csv')
-        
-        # TODO: fix error message about mixed types in one column
         
     # If it's a filetype not seen before raise an error
     else:
@@ -184,9 +189,9 @@ def df_post_process(df, mass=0, full_mass=0, area=0):
         # Find the 'state' of the first data point in half cycle 1
         initial_state = df[df['half cycle'] == 1].iloc[0].state
         
-        if initial_state == 1: # Cell starts in discharge
+        if initial_state == -1: # Cell starts in discharge
             df['full cycle'] = (df['half cycle']/2).apply(np.floor)
-        elif initial_state == 0: # Cell starts in charge
+        elif initial_state == 1: # Cell starts in charge
             df['full cycle'] = (df['half cycle']/2).apply(np.ceil)
         else:
             raise Exception("Unexpected state in the first data point of half cycle 1.")
@@ -224,20 +229,8 @@ def arbin_res(df):
     df.set_index('Data_Point', inplace=True)
     df.sort_index(inplace=True)
 
-    # Deciding on charge and discharge and rest based on current direction
-    def arbin_state(x):
-        if x > 0:
-            return 0
-        elif x < 0:
-            return 1
-        elif x == 0:
-            return 'R'
-        else:
-            print(x)
-            raise ValueError('Unexpected value in current - not a number')
-
-    df['state'] = df['Current'].map(lambda x: arbin_state(x))
-    not_rest_idx = df[df['state'] != 'R'].index
+    df['state'] = df['Current'].map(lambda x: state_from_current(x))
+    not_rest_idx = df[df['state'] != 0].index
     df['cycle change'] = False
     # If the state changes, then it's a half cycle change
     df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
@@ -253,7 +246,7 @@ def arbin_res(df):
 
     # Subtracting the initial capacity from each half cycle so it begins at zero
     for cycle in df['half cycle'].unique():
-        idx = df[(df['half cycle'] == cycle) & (df['state'] != 'R')].index
+        idx = df[(df['half cycle'] == cycle) & (df['state'] != 0)].index
         if len(idx) > 0:
             cycle_idx = df[df['half cycle'] == cycle].index
             initial_capacity = df.loc[idx[0], 'Capacity']
@@ -273,18 +266,6 @@ def biologic_processing(df):
     Returns:
         pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
     """
-    # Dealing with the different column layouts for biologic files
-
-    def bio_state(x):
-        if x > 0:
-            return 0
-        elif x < 0:
-            return 1
-        elif x == 0:
-            return 'R'
-        else:
-            print(x)
-            raise ValueError('Unexpected value in current - not a number')
 
     if 'time/s' in df.columns:
         df['Time'] = df['time/s']
@@ -293,12 +274,14 @@ def biologic_processing(df):
     if('I/mA' in df.columns) and ('Q charge/discharge/mA.h' not in df.columns) and ('dQ/mA.h' not in df.columns) and ('Ewe/V' in df.columns):
         df['Current'] = df['I/mA']
         df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
-        df['state'] = df['dV'].map(lambda x: bio_state(x))
+        df['state'] = df['dV'].map(lambda x: state_from_current(x))
+        # TODO why the fuck does this use dV instead of current? Fix this!
 
     elif('<I>/mA' in df.columns) and ('Q charge/discharge/mA.h' not in df.columns) and ('dQ/mA.h' not in df.columns) and ('Ewe/V' in df.columns):
         df['Current'] = df['<I>/mA']
         df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
-        df['state'] = df['dV'].map(lambda x: bio_state(x))
+        df['state'] = df['dV'].map(lambda x: state_from_current(x))
+        # TODO ibid
 
     # Otherwise, add the current column that galvani can't (sometimes) export for some reason
     elif ('time/s' in df.columns) and ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns):
@@ -310,7 +293,7 @@ def biologic_processing(df):
         if np.isnan(df['Current'].iloc[0]):
             df.loc[df.index[0], 'Current'] = 0
 
-        df['state'] = df['Current'].map(lambda x: bio_state(x))
+        df['state'] = df['Current'].map(lambda x: state_from_current(x))
 
     elif ('time/s' in df.columns) and ('Q charge/discharge/mA.h' in df.columns):
         df['dQ/mA.h'] = np.diff(df['Q charge/discharge/mA.h'], prepend=0)
@@ -320,19 +303,14 @@ def biologic_processing(df):
         if np.isnan(df['Current'].iloc[0]):
             df.loc[df.index[0], 'Current'] = 0
 
-        df['state'] = df['Current'].map(lambda x: bio_state(x))
+        df['state'] = df['Current'].map(lambda x: state_from_current(x))
 
     df['cycle change'] = False
     if 'state' in df.columns:
-        not_rest_idx = df[df['state'] != 'R'].index
+        not_rest_idx = df[df['state'] != 0].index
         df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
 
     df['half cycle'] = (df['cycle change'] == True).cumsum()
-
-    # Renames Ewe/V to Voltage and the capacity column to Capacity
-    # if 'half cycle' in df.columns:
-    #     if df['half cycle'].min() == 0:
-    #         df['half cycle'] = df['half cycle'] + 1
 
     if ('Q charge/discharge/mA.h' in df.columns) and ('half cycle') in df.columns:
         df['Capacity'] = abs(df['Q charge/discharge/mA.h'])
@@ -374,13 +352,8 @@ def ivium_processing(df):
 
     df['dq'] = np.diff(df['time /s'], prepend=0)*df['I /mA']
     df['Capacity'] = df['dq'].cumsum()/3600
-    def ivium_state(x):
-        if x >=0:
-            return 0
-        else:
-            return 1
 
-    df['state'] = df['I /mA'].map(lambda x: ivium_state(x))
+    df['state'] = df['I /mA'].map(lambda x: state_from_current(x))
     df['half cycle'] = df['state'].ne(df['state'].shift()).cumsum()
     for cycle in df['half cycle'].unique():
         mask = df['half cycle'] == cycle
@@ -408,20 +381,9 @@ def new_land_processing(df):
     df = df[df['Current/mA'].apply(type) != str]
     df = df[pd.notna(df['Current/mA'])]
 
-    def land_state(x):
-        if x > 0:
-            return 0
-        elif x < 0:
-            return 1
-        elif x == 0:
-            return 'R'
-        else:
-            print(x)
-            raise ValueError('Unexpected value in current - not a number')
+    df['state'] = df['Current/mA'].map(lambda x: state_from_current(x))
 
-    df['state'] = df['Current/mA'].map(lambda x: land_state(x))
-
-    not_rest_idx = df[df['state'] != 'R'].index
+    not_rest_idx = df[df['state'] != 0].index
     df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
     df['half cycle'] = (df['cycle change'] == True).cumsum()
     df['Voltage'] = df['Voltage/V']
@@ -443,19 +405,8 @@ def old_land_processing(df):
     df = df[df['Current/mA'].apply(type) != str]
     df = df[pd.notna(df['Current/mA'])]
 
-    def land_state(x):
-        if x > 0:
-            return 0
-        elif x < 0:
-            return 1
-        elif x == 0:
-            return 'R'
-        else:
-            print(x)
-            raise ValueError('Unexpected value in current - not a number')
-
-    df['state'] = df['Current/mA'].map(lambda x: land_state(x))
-    not_rest_idx = df[df['state'] != 'R'].index
+    df['state'] = df['Current/mA'].map(lambda x: state_from_current(x))
+    not_rest_idx = df[df['state'] != 0].index
     df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
     df['half cycle'] = (df['cycle change'] == True).cumsum()
     df['Voltage'] = df['Voltage/V']
@@ -475,27 +426,16 @@ def arbin_excel(df):
 
     df.reset_index(inplace=True)
 
-    def arbin_state(x):
-        if x > 0:
-            return 0
-        elif x < 0:
-            return 1
-        elif x == 0:
-            return 'R'
-        else:
-            print(x)
-            raise ValueError('Unexpected value in current - not a number')
+    df['state'] = df['Current(A)'].map(lambda x: state_from_current(x))
 
-    df['state'] = df['Current(A)'].map(lambda x: arbin_state(x))
-
-    not_rest_idx = df[df['state'] != 'R'].index
+    not_rest_idx = df[df['state'] != 0].index
     df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
     df['half cycle'] = (df['cycle change'] == True).cumsum()
     # Calculating the capacity and changing to mAh
     df['Capacity'] = (df['Discharge_Capacity(Ah)'] + df['Charge_Capacity(Ah)']) * 1000
 
     for cycle in df['half cycle'].unique():
-        idx = df[(df['half cycle'] == cycle) & (df['state'] != 'R')].index  
+        idx = df[(df['half cycle'] == cycle) & (df['state'] != 0)].index  
         if len(idx) > 0:
             cycle_idx = df[df['half cycle'] == cycle].index
             initial_capacity = df.loc[idx[0], 'Capacity']
@@ -525,17 +465,16 @@ def neware_reader(filename: Union[str, Path]) -> pd.DataFrame:
     df = read(filename)
 
     # remap to expected navani columns and units (mAh, V, mA) Our Neware machine reports mAh in column name but is in fact Ah...
-    df.set_index("Index", inplace=True)
-    df.index.rename("index", inplace=True)
-    df["Capacity"] = 1000 * (df["Discharge_Capacity(mAh)"] + df["Charge_Capacity(mAh)"])
-    df["Current"] = 1000 * df["Current(mA)"]
-    df["state"] = pd.Categorical(values=["unknown"] * len(df["Status"]), categories=["R", 1, 0, "unknown"])
-    df["state"][df["Status"] == "Rest"] = "R"
-    df["state"][df["Status"] == "CC_Chg"] = 1
-    df["state"][df["Status"] == "CC_DChg"] = 0
-    df["half cycle"] = df["Cycle"]
+    df.set_index('Index', inplace=True)
+    df.index.rename('index', inplace=True)
+    df['Capacity'] = 1000 * (df['Discharge_Capacity(mAh)'] + df['Charge_Capacity(mAh)'])
+    df['Current'] = 1000 * df['Current(mA)']
+    # Convert Neware state values into state column
+    neware_state_dict = {'Rest': 0, 'CC_Chg': 1, 'CC_DChg': -1}
+    df['state'] = df['Status'].map(lambda x: neware_state_dict[x])
+    df['half cycle'] = df['Cycle']
     df['cycle change'] = False
-    not_rest_idx = df[df['state'] != 'R'].index
+    not_rest_idx = df[df['state'] != 0].index
     df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
     return df
 
@@ -639,7 +578,7 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
     summary_df['UCV'] = df.groupby('full cycle')['Voltage'].max()
     summary_df['LCV'] = df.groupby('full cycle')['Voltage'].min()
 
-    dis_mask = df['state'] == 1
+    dis_mask = df['state'] == -1
     dis_index = df[dis_mask]['full cycle'].unique()
     if len(dis_index) > 0:
         summary_df.loc[dis_index, 'Discharge Capacity'] = df[dis_mask].groupby('full cycle')['Capacity'].max()
@@ -660,7 +599,7 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
             summary_df['Areal Discharge Capacity'] = summary_df['Discharge Capacity']/area
             summary_df['Areal Discharge Energy'] = summary_df['Discharge Energy']/area
 
-    cha_mask = df['state'] == 0
+    cha_mask = df['state'] == 1
     cha_index = df[cha_mask]['full cycle'].unique()
     if len(cha_index) > 0:
         summary_df.loc[cha_index, 'Charge Capacity'] = df[cha_mask].groupby('full cycle')['Capacity'].max()
@@ -690,26 +629,26 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
     return summary_df
 
 def halfcycles_from_cycle(df, cycle):
-    """
-    Function for determining which half cycles correspond to a given full cycle.
-
-    Args:
-        cycle (int): Full cycle number
-    
-    Returns:
-        halfcycles (list of ints): Half cycles corresponding to full cycle
-    """
+    # Determines which half cycles correspond to a given full cycle.
     try:
         mask = df['full cycle'] == cycle
         return list(df['half cycle'][mask].unique())
     except TypeError:
         print("Invalid type for cycle number.")
 
+def cycle_from_halfcycle(df, halfcycle):
+    # Function for determining which cycle corresponds to a given half cycle.
+    try:
+        mask = df['half cycle'] == halfcycle
+        return df['full cycle'][mask].iloc[0]
+    except TypeError:
+        print("Invalid type for halfcycle number.")
+
 """
 PLOTTING
 """
 
-def charge_discharge_plot(df, cycles, colormap=None, norm=None):
+def charge_discharge_plot(df, cycles, colormap=None, norm=None, fig=None, ax=None, plot_kwargs={}):
     """
     Function for plotting individual or multi but discrete charge discharge cycles
 
@@ -727,7 +666,8 @@ def charge_discharge_plot(df, cycles, colormap=None, norm=None):
         ValueError: If there are too many cycles for the default colormaps. (20)
 
     """
-    fig, ax = plt.subplots()
+    if fig == None and ax == None:
+        fig, ax = plt.subplots()
 
     # Determine type of capacity to plot, based on value of arg norm
     if norm is None:
@@ -756,7 +696,7 @@ def charge_discharge_plot(df, cycles, colormap=None, norm=None):
             df1 = df1[df1['Specific Capacity']!=0]
             # Making sure half cycle exists within the data
             if sum(mask) > 0:
-                ax.plot(df1[capacity_col], df1['Voltage'])
+                ax.plot(df1[capacity_col], df1['Voltage'], **plot_kwargs)
 
         ax.set_xlabel(capacity_label)
         ax.set_ylabel('Voltage / V')
@@ -779,7 +719,7 @@ def charge_discharge_plot(df, cycles, colormap=None, norm=None):
             df1 = df1[df1['Specific Capacity']!=0]
             # Making sure half cycle exists within the data
             if sum(mask) > 0:
-                ax.plot(df1[capacity_col], df1['Voltage'], color=cm(count))
+                ax.plot(df1[capacity_col], df1['Voltage'], color=cm(count), **plot_kwargs)
 
     from matplotlib.lines import Line2D
     custom_lines = [Line2D([0], [0], color=cm(count), lw=2) for count, _ in enumerate(cycles)]

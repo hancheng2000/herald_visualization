@@ -9,7 +9,7 @@ import sys
 import herald_visualization.echem as ec
 
 # Functions
-def append_import_to_df(df, filename, offset_flags=''):
+def append_import_to_df(df, filename, offset_flags='', filesize_warn=True):
     """
     Add the contents of a file to an existing DataFrame, possibly offsetting the time and capacity in the new data.
     The offsets will be based on the max time and latest capacity in the existing DataFrame.
@@ -27,10 +27,10 @@ def append_import_to_df(df, filename, offset_flags=''):
 
     # Files larger than this many bytes will throw a warning when being imported
     # giving the opportunity to abort analysis
-    filesize_warn_threshold = 200e6
+    filesize_warn_threshold = 250e6
 
     filesize = os.stat(filename).st_size
-    if filesize > filesize_warn_threshold:
+    if filesize > filesize_warn_threshold and filesize_warn:
         inp = input(f"File {filename} contains {filesize} bytes. Press 'y' if you would like to continue analyzing it.")
         if inp.lower() == 'y':
             print("Analysis continuing.")
@@ -224,7 +224,7 @@ def id_to_path(cellid, root_dir='../..'):
 # convert all relevant data to .csv
 def cycle_mpr2csv(
         dir_name,
-        listfile='stitch.txt',
+        listfile='stitch.txt'
     ):
     df = pd.DataFrame()
     home_dir = os.getcwd()
