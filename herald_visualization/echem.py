@@ -187,7 +187,7 @@ def df_post_process(df, mass=0, full_mass=0, area=0):
     # 1 full cycle is charge then discharge; code considers which the test begins with
     if 'half cycle' in df.columns:
         # Find the 'state' of the first data point in half cycle 1
-        initial_state = df[df['half cycle'] == 1].iloc[0].state
+        initial_state = df.loc[df['half cycle'] == 1]['state'].iloc[0]
         
         if initial_state == -1: # Cell starts in discharge
             df['full cycle'] = (df['half cycle']/2).apply(np.floor)
@@ -266,71 +266,66 @@ def biologic_processing(df):
     Returns:
         pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
     """
-
     if 'time/s' in df.columns:
         df['Time'] = df['time/s']
 
     # If current has been correctly exported then we can use that
-    if('I/mA' in df.columns) and ('Q charge/discharge/mA.h' not in df.columns) and ('dQ/mA.h' not in df.columns) and ('Ewe/V' in df.columns):
+    if('I/mA' in df.columns) and ('Ewe/V' in df.columns):
         df['Current'] = df['I/mA']
         df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
-        df['state'] = df['dV'].map(lambda x: state_from_current(x))
-        # TODO why the fuck does this use dV instead of current? Fix this!
-
-    elif('<I>/mA' in df.columns) and ('Q charge/discharge/mA.h' not in df.columns) and ('dQ/mA.h' not in df.columns) and ('Ewe/V' in df.columns):
+        df['state'] = df['Current'].map(lambda x: state_from_current(x))
+    elif('<I>/mA' in df.columns) and ('Ewe/V' in df.columns):
         df['Current'] = df['<I>/mA']
         df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
-        df['state'] = df['dV'].map(lambda x: state_from_current(x))
-        # TODO ibid
-
+        df['state'] = df['Current'].map(lambda x: state_from_current(x))
     # Otherwise, add the current column that galvani can't (sometimes) export for some reason
-    elif ('time/s' in df.columns) and ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns):
-        df['dt'] = np.diff(df['time/s'], prepend=0)
+    elif ('Time' in df.columns) and ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns):
+        df['dt'] = np.diff(df['Time'], prepend=0)
         if 'dQ/mA.h' not in df.columns:
             df.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
         df['Current'] = df['dQ/mA.h']/(df['dt']/3600)
-
         if np.isnan(df['Current'].iloc[0]):
             df.loc[df.index[0], 'Current'] = 0
-
         df['state'] = df['Current'].map(lambda x: state_from_current(x))
-
-    elif ('time/s' in df.columns) and ('Q charge/discharge/mA.h' in df.columns):
+    elif ('Time' in df.columns) and ('Q charge/discharge/mA.h' in df.columns):
         df['dQ/mA.h'] = np.diff(df['Q charge/discharge/mA.h'], prepend=0)
-        df['dt'] = np.diff(df['time/s'], prepend=0)
+        df['dt'] = np.diff(df['Time'], prepend=0)
         df['Current'] = df['dQ/mA.h']/(df['dt']/3600)
-
         if np.isnan(df['Current'].iloc[0]):
             df.loc[df.index[0], 'Current'] = 0
-
         df['state'] = df['Current'].map(lambda x: state_from_current(x))
 
     df['cycle change'] = False
     if 'state' in df.columns:
         not_rest_idx = df[df['state'] != 0].index
         df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
-
     df['half cycle'] = (df['cycle change'] == True).cumsum()
 
-    if ('Q charge/discharge/mA.h' in df.columns) and ('half cycle') in df.columns:
-        df['Capacity'] = abs(df['Q charge/discharge/mA.h'])
-        df.rename(columns = {'Ewe/V':'Voltage'}, inplace = True)
-        return df
-
-    elif ('dQ/mA.h' in df.columns) and ('half cycle') in df.columns:
+    # It's preferable to use dQ or dq to avoid some issues from EC-lab resetting
+    # the capacity values within a half cycle
+    if ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns)  and ('half cycle' in df.columns):
+        if 'dQ/mA.h' not in df.columns:
+            df.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
         df['Half cycle cap'] = abs(df['dQ/mA.h'])
         for cycle in df['half cycle'].unique():
             mask = df['half cycle'] == cycle
             cycle_idx = df.index[mask]
-            df.loc[cycle_idx, 'Half cycle cap'] = df.loc[cycle_idx, 'Half cycle cap'].cumsum()
-        df.rename(columns = {'Half cycle cap':'Capacity'}, inplace = True)
+            df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, 'Half cycle cap'].cumsum()
+        # df.rename(columns = {'Half cycle cap':'Capacity'}, inplace = True)
         df.rename(columns = {'Ewe/V':'Voltage'}, inplace = True)
         return df
-    elif ('(Q-Qo)/C' in df.columns) and ('half cycle') in df.columns:
+    elif ('(Q-Qo)/C' in df.columns) and ('half cycle' in df.columns):
         for cycle in df['half cycle'].unique():
             mask = df['half cycle'] == cycle
             cycle_idx = df.index[mask]
             df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, '(Q-Qo)/C'] - df.loc[cycle_idx[0], '(Q-Qo)/C']
+        df.rename(columns = {'Ewe/V':'Voltage'}, inplace = True)
+        return df
+    elif ('Q charge/discharge/mA.h' in df.columns) and ('half cycle' in df.columns):
+        df['Capacity'] = abs(df['Q charge/discharge/mA.h'])
+        # Each half cycle's capacity should start at 0
+        initial_capacity_by_halfcycle = df.groupby('half cycle')['Capacity'].first()
+        df['Capacity'] = df.apply(lambda row: row['Capacity'] - initial_capacity_by_halfcycle[row['half cycle']], axis=1)
         df.rename(columns = {'Ewe/V':'Voltage'}, inplace = True)
         return df
     else:

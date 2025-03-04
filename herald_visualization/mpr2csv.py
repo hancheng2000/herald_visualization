@@ -258,7 +258,7 @@ def cycle_mpr2csv(
     print(f"Settings file: {settings_filename}")
 
     # Post-process
-    df = df.sort_values(by='time/s', ignore_index=True)
+    df = df.sort_values(by='Time', ignore_index=True)
     df = ec.biologic_processing(df)
     if cell_props:
         print(f"Cell properties: {cell_props}")
