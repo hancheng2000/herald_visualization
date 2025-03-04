@@ -9,6 +9,36 @@ import sys
 import herald_visualization.echem as ec
 
 # Functions
+
+# Check for a file defining the path to the local system's data directory
+# If it exists, use that path as the default in id_to_path
+# Otherwise, ask the user to specify the path and save it into a file
+data_path_file = 'data_path.txt'
+if os.path.isfile(data_path_file):
+    f = open(data_path_file, 'r')
+    data_path = f.readline()
+    f.close()
+else:
+    print("The id_to_path function needs the path to your test data directory in order to search.")
+    print(f"This can be edited by changing {data_path_file}.")
+    data_path = input("Input your data directory path: ")
+    f = open(data_path_file, 'w')
+    f.write(data_path)
+    f.close()
+
+def id_to_path(cellid, root_dir=data_path):
+    """
+    Find the correct directory path to a data folder from the cell ID
+    """
+    glob_str = os.path.join('**', '*'+cellid+'*/')
+    paths = glob.glob(glob_str, root_dir=root_dir, recursive=True)
+    if len(paths) == 1:
+        return os.path.join(root_dir, paths[0])
+    elif len(paths) == 0:
+        print(f"No paths matched for {cellid}")
+    else:
+        print(f"Too many paths matched for {cellid}: {paths}")
+
 def append_import_to_df(df, filename, offset_flags='', filesize_warn=True):
     """
     Add the contents of a file to an existing DataFrame, possibly offsetting the time and capacity in the new data.
@@ -207,19 +237,6 @@ def total_AM_mass(cell_props):
     # Mass of fully intercalated cathode material
     full_active_material_mass = active_material_mass * full_mol_weight / starting_mol_weight
     return full_active_material_mass
-
-def id_to_path(cellid, root_dir='../..'):
-    """
-    Find the correct directory path to a data folder from the cell ID
-    """
-    glob_str = os.path.join('**', '*'+cellid+'*/')
-    paths = glob.glob(glob_str, root_dir=root_dir, recursive=True)
-    if len(paths) == 1:
-        return os.path.join(root_dir, paths[0])
-    elif len(paths) == 0:
-        print(f"No paths matched for {cellid}")
-    else:
-        print(f"Too many paths matched for {cellid}: {paths}")
     
 # convert all relevant data to .csv
 def cycle_mpr2csv(
