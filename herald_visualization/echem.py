@@ -49,14 +49,14 @@ def multi_file_biologic(filepath, time_offset=0, capacity_offset=0):
 
     return df
 
-def echem_file_loader(filepath):
+def echem_file_loader(filepath, df_to_append_to=None, time_offset=0, processing=True):
     """
     Loads a variety of electrochemical filetypes and tries to construct the most useful measurements in a
     consistent way, with consistent column labels. Outputs a dataframe with the original columns, and these constructed columns:
     
     - "state": 0 for rest, -1 for discharge, 1 for charge (defined by the current direction +ve or -ve)
-    - "half cycle": Counts the half cycles, rests are not included as a half cycle
-    - "full cycle": Counts the full cycles, rests are not included as a full cycle
+    - "half cycle": Counts the half cycles, rests are included with the preceding data
+    - "full cycle": Counts the full cycles, defined as a charge followed by a discharge
     - "cycle change": Boolean column that is True when the state changes
     - "Capacity": The capacity of the cell, each half cycle it resets to 0 - In general this will be in mAh - however it depends what unit the original file is in - Arbin Ah automatically converted to mAh
     - "Voltage": The voltage of the cell
@@ -66,16 +66,26 @@ def echem_file_loader(filepath):
     
     Parameters:
         filepath (str): The path to the electrochemical file.
+        The following parameters are only implemented for Biologic files:
+        df_to_append_to (pd.DataFrame): DataFrame to append the newly loaded data to the end of, for combining multiple raw data files.
+        time_offset (float): Amount to increase the time values of newly loaded data in order to stitch together raw data files.
+        processing (bool): If true, columns will be processed into the consistent form. False allows for performance boost when appending multiple files.
     
     Returns:
         pandas.DataFrame: A dataframe with the original columns and the constructed columns.
     """
     extension = os.path.splitext(filepath)[-1].lower()
+    
     # Biologic file
     if extension == '.mpr':
         gal_file = MPRfile(os.path.join(filepath))
         df = pd.DataFrame(data=gal_file.data)
-        df = biologic_processing(df)
+        df['time/s'] += time_offset
+        # Concatenate if df_to_append_to exists, otherwise it will be silently dropped
+        df = pd.concat([df_to_append_to, df], ignore_index=True)
+        if processing:
+            df.sort_values('time/s', inplace=True)
+            df = biologic_processing(df)
 
     # arbin .res file - uses an sql server and requires mdbtools installed
     # sudo apt get mdbtools for windows and mac
@@ -671,87 +681,6 @@ def cycle_from_halfcycle(df, halfcycle):
 """
 PLOTTING
 """
-
-def charge_discharge_plot(df, cycles, colormap=None, norm=None, fig=None, ax=None, plot_kwargs={}):
-    """
-    Function for plotting individual or multi but discrete charge discharge cycles
-
-    Args:
-        df (DataFrame): The input dataframe containing the data for plotting.
-        full_cycle (int or list of ints): The full cycle number(s) to plot. If an integer is provided, a single cycle will be plotted (charge and discharge). If a list is provided, multiple cycles will be plotted.
-        colormap (str, optional): The colormap to use for coloring the cycles. If not provided, a default colormap will be used based on the number of cycles.
-        norm (str, optional): Normalization by 'mass', 'full_mass', or 'area', if desired. 'full_mass' refers to the mass of the cathode AM material and stoichiometric anode material, i.e. fully lithiated cathode.
-
-    Returns:
-        fig (Figure): The matplotlib Figure object.
-        ax (Axes): The matplotlib Axes object.
-
-    Raises:
-        ValueError: If there are too many cycles for the default colormaps. (20)
-
-    """
-    if fig == None and ax == None:
-        fig, ax = plt.subplots()
-
-    # Determine type of capacity to plot, based on value of arg norm
-    if norm is None:
-        capacity_col = 'Capacity'
-        capacity_label = 'Capacity / mAh'
-    elif norm == 'mass' and 'Specific Capacity' in df.columns:
-        capacity_col = 'Specific Capacity'
-        capacity_label = 'Specific Capacity / mAh/g cathode'
-    elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
-        capacity_col = 'Specific Capacity Total AM'
-        capacity_label = 'Specific Capacity / mAh/g AM'
-    elif norm == 'area' and 'Areal Capacity' in df.columns:
-        capacity_col = 'Areal Capacity'
-        capacity_label = 'Areal Capacity / mAh/cm$^2$'
-    else:
-        print("Invalid argument for norm or required column not present in df.")
-
-    try:
-        iter(cycles)
-
-    except TypeError: # Happens if full_cycle is an int
-        halfcycles = halfcycles_from_cycle(df, cycles)
-        for halfcycle in halfcycles:
-            mask = df['half cycle'] == halfcycle
-            df1 = df[mask]
-            df1 = df1[df1['Specific Capacity']!=0]
-            # Making sure half cycle exists within the data
-            if sum(mask) > 0:
-                ax.plot(df1[capacity_col], df1['Voltage'], **plot_kwargs)
-
-        ax.set_xlabel(capacity_label)
-        ax.set_ylabel('Voltage / V')
-        return fig, ax
-
-    if not colormap:
-        if len(cycles) < 11:
-            colormap = 'tab10'
-        elif len(cycles) < 21:
-            colormap = 'tab20'
-        else:
-            raise ValueError("Too many cycles for default colormaps. Use multi_cycle_plot instead")
-
-    cm = plt.get_cmap(colormap)
-    for count, cycle in enumerate(cycles):
-        halfcycles = halfcycles_from_cycle(df, cycle)
-        for halfcycle in halfcycles:
-            mask = df['half cycle'] == halfcycle
-            df1 = df[mask]
-            df1 = df1[df1['Specific Capacity']!=0]
-            # Making sure half cycle exists within the data
-            if sum(mask) > 0:
-                ax.plot(df1[capacity_col], df1['Voltage'], color=cm(count), **plot_kwargs)
-
-    from matplotlib.lines import Line2D
-    custom_lines = [Line2D([0], [0], color=cm(count), lw=2) for count, _ in enumerate(cycles)]
-
-    ax.legend(custom_lines, [f'Cycle {i}' for i in cycles])
-    ax.set_xlabel(capacity_label)
-    ax.set_ylabel('Voltage / V')
-    return fig, ax
 
 def multi_cycle_plot(df, cycles, colormap='viridis', norm=None):
     """
