@@ -268,6 +268,7 @@ def biologic_processing(df):
     """
     if 'time/s' in df.columns:
         df['Time'] = df['time/s']
+        df['dt'] = np.diff(df['Time'], prepend=0)
 
     # If current has been correctly exported then we can use that
     if('I/mA' in df.columns) and ('Ewe/V' in df.columns):
@@ -279,17 +280,15 @@ def biologic_processing(df):
         df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
         df['state'] = df['Current'].map(lambda x: state_from_current(x))
     # Otherwise, add the current column that galvani can't (sometimes) export for some reason
-    elif ('Time' in df.columns) and ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns):
-        df['dt'] = np.diff(df['Time'], prepend=0)
+    elif ('dt' in df.columns) and ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns):
         if 'dQ/mA.h' not in df.columns:
             df.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
         df['Current'] = df['dQ/mA.h']/(df['dt']/3600)
         if np.isnan(df['Current'].iloc[0]):
             df.loc[df.index[0], 'Current'] = 0
         df['state'] = df['Current'].map(lambda x: state_from_current(x))
-    elif ('Time' in df.columns) and ('Q charge/discharge/mA.h' in df.columns):
+    elif ('dt' in df.columns) and ('Q charge/discharge/mA.h' in df.columns):
         df['dQ/mA.h'] = np.diff(df['Q charge/discharge/mA.h'], prepend=0)
-        df['dt'] = np.diff(df['Time'], prepend=0)
         df['Current'] = df['dQ/mA.h']/(df['dt']/3600)
         if np.isnan(df['Current'].iloc[0]):
             df.loc[df.index[0], 'Current'] = 0
@@ -539,7 +538,8 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
     - 'Average Charge Voltage': The average charge voltage for the cycle
     - 'Discharge Energy': The integral energy on discharge for the cycle
     - 'Charge Energy': The integral energy of charge for the cycle
-    - 
+    - 'Discharge Overpotential': Overpotential as calculated by the relaxation after discharge
+    - 'Charge Overpotential': Overpotential as calculated by the relaxation after charge
     
     Args:
         df (pandas.DataFrame): The input DataFrame containing the data.
@@ -584,15 +584,29 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
             energy = np.trapz(df[mask]['Voltage'], df[mask]['Capacity'])
             # Add an entry to the summary for each full cycle
             summary_df.loc[cycle, 'Discharge Energy'] = energy
+            
+            # Amount of relaxation at end of discharge
+            # Only accurate for tests with a single rest in the discharge halfcycle
+            summary_df.loc[cycle, 'Discharge Overpotential'] = df.loc[mask & (df['state'] == 0)]['Voltage'].max() - df.loc[mask & (df['state'] == -1)]['Voltage'].min()
+            
+            # Time-weighted average of current/power only among the points in the given half cycle where the cell is not resting
+            summary_df.loc[cycle, 'Average Discharge Current'] = np.average(df.loc[mask & dis_mask]['Current'], weights=df.loc[mask & dis_mask]['dt'])
+            summary_df.loc[cycle, 'Average Discharge Power'] = np.average(df.loc[mask & dis_mask]['Power'], weights=df.loc[mask & dis_mask]['dt'])
         if mass > 0:
             summary_df['Specific Discharge Capacity'] = 1000*summary_df['Discharge Capacity']/mass
             summary_df['Specific Discharge Energy'] = 1000*summary_df['Discharge Energy']/mass
+            summary_df['Specific Average Discharge Current'] = 1000*summary_df['Average Discharge Current']/mass
+            summary_df['Specific Average Discharge Power'] = 1000*summary_df['Average Discharge Power']/mass
         if full_mass > 0:
             summary_df['Specific Discharge Capacity Total AM'] = 1000*summary_df['Discharge Capacity']/full_mass
             summary_df['Specific Discharge Energy Total AM'] = 1000*summary_df['Discharge Energy']/full_mass
+            summary_df['Specific Average Discharge Current Total AM'] = 1000*summary_df['Average Discharge Current']/full_mass
+            summary_df['Specific Average Discharge Power Total AM'] = 1000*summary_df['Average Discharge Power']/full_mass
         if area > 0:
             summary_df['Areal Discharge Capacity'] = summary_df['Discharge Capacity']/area
             summary_df['Areal Discharge Energy'] = summary_df['Discharge Energy']/area
+            summary_df['Areal Average Discharge Current'] = summary_df['Average Discharge Current']/area
+            summary_df['Areal Average Discharge Power'] = summary_df['Average Discharge Power']/area
 
     cha_mask = df['state'] == 1
     cha_index = df[cha_mask]['full cycle'].unique()
@@ -606,15 +620,30 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
             energy = np.trapz(df[mask]['Voltage'], df[mask]['Capacity'])
             # Add an entry to the summary for each full cycle
             summary_df.loc[cycle, 'Charge Energy'] = energy
+            
+            # Amount of relaxation at end of charge
+            # Only accurate for tests with a single rest at the end of charge
+            summary_df.loc[cycle, 'Charge Overpotential'] = df.loc[mask & (df['state'] == 1)]['Voltage'].max() - df.loc[mask & (df['state'] == 0)]['Voltage'].min()
+
+            # Time-weighted average of current only among the points in the given half cycle where the cell is not resting
+            summary_df.loc[cycle, 'Average Charge Current'] = np.average(df.loc[mask & cha_mask]['Current'], weights=df.loc[mask & cha_mask]['dt'])
+            summary_df.loc[cycle, 'Average Charge Power'] = np.average(df.loc[mask & cha_mask]['Power'], weights=df.loc[mask & cha_mask]['dt'])
         if mass > 0:
             summary_df['Specific Charge Capacity'] = 1000*summary_df['Charge Capacity']/mass
             summary_df['Specific Charge Energy'] = 1000*summary_df['Charge Energy']/mass
+            summary_df['Specific Average Charge Current'] = 1000*summary_df['Average Charge Current']/mass
+            summary_df['Specific Average Charge Power'] = 1000*summary_df['Average Charge Power']/mass
+            
         if full_mass > 0:
             summary_df['Specific Charge Capacity Total AM'] = 1000*summary_df['Charge Capacity']/full_mass
             summary_df['Specific Charge Energy Total AM'] = 1000*summary_df['Charge Energy']/full_mass
+            summary_df['Specific Average Charge Current Total AM'] = 1000*summary_df['Average Charge Current']/full_mass
+            summary_df['Specific Average Charge Power Total AM'] = 1000*summary_df['Average Charge Power']/full_mass
         if area > 0:
             summary_df['Areal Charge Capacity'] = summary_df['Charge Capacity']/area
             summary_df['Areal Charge Energy'] = summary_df['Charge Energy']/area
+            summary_df['Areal Average Charge Current'] = summary_df['Average Charge Current']/area
+            summary_df['Areal Average Charge Power'] = summary_df['Average Charge Power']/area
     
     if 'Discharge Energy' in summary_df.columns and 'Discharge Capacity' in summary_df.columns:
         summary_df['Average Discharge Voltage'] = summary_df['Discharge Energy']/summary_df['Discharge Capacity']
