@@ -5,7 +5,6 @@ import pandas as pd
 import glob
 import re
 import os
-import sys
 import herald_visualization.echem as ec
 
 # Functions
@@ -39,58 +38,16 @@ def id_to_path(cellid, root_dir=data_path):
     else:
         print(f"Too many paths matched for {cellid}: {paths}")
 
-def append_import_to_df(df, filename, offset_flags='', filesize_warn=True):
-    """
-    Add the contents of a file to an existing DataFrame, possibly offsetting the time and capacity in the new data.
-    The offsets will be based on the max time and latest capacity in the existing DataFrame.
-
-    Args:
-    - df (pandas.DataFrame): The DataFrame to be added to.
-    - filename (str): The filepath that should be imported and added to the DataFrame.
-    - offset_flags (str, opt): String containing T and/or C to indicate that time and/or capacity should be offset.
-
-    Returns:
-    - pandas.DataFrame: A DataFrame with the data imported from filename appended to df.
-    """
-    time_offset = 0
-    capacity_offset = 0
-
-    # Files larger than this many bytes will throw a warning when being imported
-    # giving the opportunity to abort analysis
-    filesize_warn_threshold = 250e6
-
-    filesize = os.stat(filename).st_size
-    if filesize > filesize_warn_threshold and filesize_warn:
-        inp = input(f"File {filename} contains {filesize} bytes. Press 'y' if you would like to continue analyzing it.")
-        if inp.lower() == 'y':
-            print("Analysis continuing.")
-        else:
-            print("Analysis terminated.")
-            sys.exit(1)
-
-    # TODO: catch errors from empty df
-    if 't' in offset_flags.lower():
-        time_offset = df['time/s'].max()
-    
-    if 'c' in offset_flags.lower():
-        df = df.sort_values(by='time/s', ignore_index=True)
-        capacity_offset = df['Q charge/discharge/mA.h'].iloc[-1]
-
-    new_data = ec.multi_file_biologic(filename, time_offset=time_offset, capacity_offset=capacity_offset)
-    df = pd.concat([df, new_data], ignore_index=True)
-    return df
-
 def import_data_using_listfile(df, listfile='stitch.txt'):
     """
     Import data files using an explicit list in a text file.
     Each line in the listfile is a filename.
-    optionally followed by 'T' and/or 'C' (no quotations needed).
+    optionally followed by 'T' (no quotations needed).
     - T: Offset time values in the imported file by the latest timestamp in previously imported data.
         Allows for restarted tests to be stitched back together in time.
-    - C: Offset capacity values in the imported file by the latest capacity in previously imported data.
-        Use if a test was restarted after interruption within a cycle.
     """
     data_filenames = []
+    offset_bools = []
 
     try:
         with open(listfile, 'r') as file:
@@ -98,41 +55,57 @@ def import_data_using_listfile(df, listfile='stitch.txt'):
             # If listfile is empty, skip analysis
             if lines == []:
                 print(f"Analysis skipped due to empty {listfile}.")
-                sys.exit(1)
-            else:
-                for line in lines:
-                    # Separate each line by whitespace into the filename and the flags for which fields to offset (i.e. T for time and C for capacity)
-                    line = line.strip().split(None, maxsplit=1)
-                    filename = line[0]
-                    if len(line) > 1:
-                        offset_flags = line[1]
-                    else:
-                        offset_flags = ''
+                return [], pd.DataFrame()
+            
+            for line in lines:
+                # Separate each line by whitespace into the filename and the flags for which fields to offset (i.e. T for time)
+                line = line.strip().split(None, maxsplit=1)
+                filename = line[0]
+                # Keep track of whether a time offset needs to be added when each file is loaded
+                if len(line) > 1 and 'T' in line[1].upper():
+                    offset_bools += [True]
+                else:
+                    offset_bools += [False]
 
-                    # If the filename does not correspond to a valid file, prompt the user to continue without it                        
-                    if not os.path.isfile(filename):
-                        inp = input(f"File {filename} from {listfile} could not be found. Enter 'y' if you wish to skip it and continue anyway.")
-                        if inp.lower() == 'y':
-                            print(f"File {filename} skipped. Analysis continuing.")
-                        else:
-                            print("Analysis terminated by user.")
-                            sys.exit(1)
-                    # If the filename is already in data_filenames, prompt the user to continue
-                    elif filename in data_filenames:
-                        inp = input(f"Filename {filename} is duplicated in {listfile}. Enter 'y' if you wish for it to be duplicated in the analysis. Otherwise, the repeat instance will be ignored.")
-                        if inp.lower() == 'y':
-                            df = append_import_to_df(df, filename, offset_flags=offset_flags)
-                            data_filenames += [filename]
-                    # Else filename corresponds to a filename that is not already in data_filenames
+                # If the filename does not correspond to a valid file, prompt the user to continue without it                        
+                if not os.path.isfile(filename):
+                    inp = input(f"File {filename} from {listfile} could not be found. Enter 'y' if you wish to skip it and continue anyway.")
+                    if inp.lower() == 'y':
+                        print(f"File {filename} skipped. Analysis continuing.")
                     else:
-                        df = append_import_to_df(df, filename, offset_flags=offset_flags)
+                        print("Analysis terminated by user.")
+                        return [], pd.DataFrame()
+                # If the filename is already in data_filenames, prompt the user to continue
+                elif filename in data_filenames:
+                    inp = input(f"Filename {filename} is duplicated in {listfile}. Enter 'y' if you wish for it to be duplicated in the analysis. Otherwise, the repeat instance will be ignored.")
+                    if inp.lower() == 'y':
                         data_filenames += [filename]
-                print(f"Imported using {listfile}.")
-                return data_filenames, df
+                # Else filename corresponds to a filename that is not already in data_filenames
+                else:
+                    data_filenames += [filename]
+    
     except IOError:
         # If listfile cannot be opened
         print(f"Unable to open/read {listfile}. Analysis skipped.")
-        sys.exit(1)
+        return [], pd.DataFrame()
+    
+    for i, (file, bool) in enumerate(zip(data_filenames, offset_bools)):
+        # Calculate time_offset from existing data in df
+        if bool:
+            try:
+                time_offset = df['time/s'].max()
+            except KeyError: # Takes care of case where True appears before there is data present
+                time_offset = 0.0
+        else:
+            time_offset = 0.0
+        # Only do the full processing step on the last file to load, in order to speed up loading
+        if i == len(data_filenames) - 1:
+            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, processing=True)
+        else:
+            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, processing=False)
+    
+    print(f"Imported using {listfile}.")
+    return data_filenames, df
 
 def import_data_using_pattern(df):
     """
@@ -148,36 +121,38 @@ def import_data_using_pattern(df):
     data_filenames += glob.glob(match_string)
     # # Order files by time of creation so that they get added in sequence to the dataframe
     # data_filenames.sort(key=os.path.getctime)
-
+    
+    # Tests that should not be used even if they are the only ones found
+    blacklist = ['EIS_', '_OCV_']
     # Check whether no matches with search_keyword were found
     if len(data_filenames) == 0:
         # If only one .mpr file was made by the test, it should be used even if it lacks the search_keyword
-        data_filenames += glob.glob('*.mpr')
+        # as long as it does not contain any of the blacklisted keywords
+        data_filenames = [file for file in glob.glob('*.mpr') if not any(blacklist_item in file for blacklist_item in blacklist)]
         if len(data_filenames) == 0:
             print("No .mpr files found by auto-search.")
-            sys.exit(1)
+            return [], pd.DataFrame()
         elif len(data_filenames) > 1:
             print("Too many .mpr files found by auto-search. Use a listfile to indicate which files to analyze.")
-            sys.exit(1)
+            print(data_filenames)
+            return [], pd.DataFrame()
 
-    for filename in data_filenames:
-        df = append_import_to_df(df, filename)
+    for i, file in enumerate(data_filenames):
+        # Only do the full processing step on the last file to load, in order to speed up loading
+        if i == len(data_filenames) - 1:
+            df = ec.echem_file_loader(file, df_to_append_to=df, processing=True)
+        else:
+            df = ec.echem_file_loader(file, df_to_append_to=df, processing=False)
+    
     return data_filenames, df
 
-def import_settings(data_filenames):
-    """
-    Imports info about the cell from the .mps settings file.
-    """
-    # Back-generate the .mps filename that would create each file and check that they are the same
+def settings_filename_from_data_filename(data_filename):
+    # Determine the settings filename that EC-lab would autogenerate for a given data filename
     mpr_regex = r'(_\d{2}_[a-zA-Z]+)?_C\d{2}.mpr'
-    mps_filenames = [re.sub(mpr_regex, '.mps', filename) for filename in data_filenames]
-    if len(set(mps_filenames)) > 1:
-        print("Auto-search found files from multiple tests. The first test's settings file is being used.")
-    
-    # Assume that the cell characteristics are the same in all settings files,
-    # only look at settings file associated with first data file
-    settings_filename = mps_filenames[0]
+    return re.sub(mpr_regex, '.mps', data_filename)
 
+def import_settings(settings_filename):
+    # Imports info about the cell from the .mps settings file.
     # Key: variable in the settings file
     # Val: string in the associated line of the settings file
     settings_keys = {
@@ -210,7 +185,7 @@ def import_settings(data_filenames):
                         # The final matching string is used
                         cell_props[new_key[0]] = float(match[-1])
             
-            return cell_props, settings_filename
+            return cell_props
       
     except:
         print("Unable to read settings file.")
@@ -246,20 +221,31 @@ def cycle_mpr2csv(
     df = pd.DataFrame()
     home_dir = os.getcwd()
     os.chdir(dir_name)
-    print("Running in", os.getcwd())
+    print(f"Running in {dir_name}")
     
     # Import data and settings
     if os.path.isfile(listfile):
-        data_filenames, df = import_data_using_listfile(df=df)
+        data_filenames, df = import_data_using_listfile(df=df, listfile=listfile)
     else:
         data_filenames, df = import_data_using_pattern(df=df)
+    
+    # Break if data import is unsuccessful
+    if len(df) == 0:
+        return None
+    # Otherwise continue
     print(f"Data file(s): {data_filenames}")
-    cell_props, settings_filename = import_settings(data_filenames)
+
+    # Check that all test files came from the same settings file, i.e. test
+    mps_filenames = [settings_filename_from_data_filename(filename) for filename in data_filenames]
+    if len(set(mps_filenames)) > 1:
+        print("Auto-search found files from multiple tests. The first test's settings file is being used. A listfile may be needed if not already present.")
+    # Assume that the cell characteristics are the same in all settings files,
+    # only look at settings file associated with first data file
+    settings_filename = mps_filenames[0]
+    cell_props = import_settings(settings_filename)
     print(f"Settings file: {settings_filename}")
 
     # Post-process
-    df = df.sort_values(by='Time', ignore_index=True)
-    df = ec.biologic_processing(df)
     if cell_props:
         print(f"Cell properties: {cell_props}")
         mass = cell_props['active_material_mass']
@@ -287,8 +273,9 @@ def cycle_mpr2csv(
         cycle_summary = ec.cycle_summary(df, mass=mass, full_mass=full_mass, area=area)
         cycle_summary_csv_filename = os.path.join('outputs', 'cycle_summary.csv')
         cycle_summary.to_csv(cycle_summary_csv_filename)
-        print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
+        # print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
     
+    print("")
     os.chdir(home_dir)
     return df
 

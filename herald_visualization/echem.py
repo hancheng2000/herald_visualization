@@ -3,7 +3,6 @@ from galvani import res2sqlite as r2s
 
 import pandas as pd
 import numpy as np
-import warnings
 from scipy.signal import savgol_filter
 import sqlite3
 import os
@@ -30,26 +29,14 @@ def state_from_current(x):
     elif x == 0:
         return 0
     else:
-        print(x)
-        raise ValueError('Unexpected value in current - not a number')
+        # print(x)
+        # raise ValueError('Unexpected value in current - not a number')
+        return 0
 
-def multi_file_biologic(filepath, time_offset=0, capacity_offset=0):
-    """
-    
-    """
-    gal_file = MPRfile(os.path.join(filepath))
-    df = pd.DataFrame(data=gal_file.data)
-
-    # Offset time and/or capacity to make stitched files continuous
-    if time_offset != 0 or capacity_offset != 0:
-        df['time/s'] += time_offset
-        df['Q charge/discharge/mA.h'] += capacity_offset
-
-    df = biologic_processing(df)
-
-    return df
-
-def echem_file_loader(filepath, df_to_append_to=None, time_offset=0, processing=True):
+def echem_file_loader(filepath, 
+                      df_to_append_to=None, 
+                      time_offset=0.0, 
+                      processing=True):
     """
     Loads a variety of electrochemical filetypes and tries to construct the most useful measurements in a
     consistent way, with consistent column labels. Outputs a dataframe with the original columns, and these constructed columns:
@@ -176,7 +163,8 @@ def echem_file_loader(filepath, df_to_append_to=None, time_offset=0, processing=
         print(extension)
         raise RuntimeError("Filetype {extension} not recognised.")
 
-    df_post_process(df)
+    if processing:
+        df_post_process(df)
 
     return df
 
@@ -196,8 +184,8 @@ def df_post_process(df, mass=0, full_mass=0, area=0):
     # Adding a full cycle column
     # 1 full cycle is charge then discharge; code considers which the test begins with
     if 'half cycle' in df.columns:
-        # Find the 'state' of the first data point in half cycle 1
-        initial_state = df.loc[df['half cycle'] == 1]['state'].iloc[0]
+        # Find the first state that is not rest
+        initial_state = df.loc[df['state'] != 0]['state'].iloc[0]
         
         if initial_state == -1: # Cell starts in discharge
             df['full cycle'] = (df['half cycle']/2).apply(np.floor)
@@ -211,15 +199,16 @@ def df_post_process(df, mass=0, full_mass=0, area=0):
         df['Power'] = df['Current']*df['Voltage']
 
     # Adding mass- and area-normalized columns if mass and area are provided
-    if mass > 0:
+    # Ignore if defaults of 0.001 are present, since they result in absurdly high values
+    if mass > 0.001:
         df['Specific Capacity'] = 1000*df['Capacity']/mass
         df['Specific Current'] = 1000*df['Current']/mass
         df['Specific Power'] = 1000*df['Power']/mass
-    if full_mass > 0:
+    if full_mass > 0.001 and mass > 0.001:
         df['Specific Capacity Total AM'] = 1000*df['Capacity']/full_mass
         df['Specific Current Total AM'] = 1000*df['Current']/full_mass
         df['Specific Power Total AM'] = 1000*df['Power']/full_mass        
-    if area > 0:
+    if area > 0.001:
         df['Areal Capacity'] = df['Capacity']/area
         df['Areal Current'] = df['Current']/area
         df['Areal Power'] = df['Power']/area
@@ -294,15 +283,15 @@ def biologic_processing(df):
         if 'dQ/mA.h' not in df.columns:
             df.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
         df['Current'] = df['dQ/mA.h']/(df['dt']/3600)
-        if np.isnan(df['Current'].iloc[0]):
-            df.loc[df.index[0], 'Current'] = 0
+        df.fillna({'Current': 0}, inplace=True) # Prevents singularities when joining multiple files
         df['state'] = df['Current'].map(lambda x: state_from_current(x))
     elif ('dt' in df.columns) and ('Q charge/discharge/mA.h' in df.columns):
         df['dQ/mA.h'] = np.diff(df['Q charge/discharge/mA.h'], prepend=0)
         df['Current'] = df['dQ/mA.h']/(df['dt']/3600)
-        if np.isnan(df['Current'].iloc[0]):
-            df.loc[df.index[0], 'Current'] = 0
+        df.fillna({'Current': 0}, inplace=True) # Prevents singularities when joining multiple files
         df['state'] = df['Current'].map(lambda x: state_from_current(x))
+    else:
+        print("Lacking necessary columns to determine state.")
 
     df['cycle change'] = False
     if 'state' in df.columns:
@@ -510,7 +499,7 @@ def dqdv_single_cycle(capacity, voltage,
     import numpy as np
     from scipy.interpolate import splrep, splev
 
-    df = pd.DataFrame({'Capacity': capacity, 'Voltage':voltage})
+    df = pd.DataFrame({'Capacity': capacity, 'Voltage': voltage})
     unique_v = df.astype(float).groupby('Voltage').mean().index
     unique_v_cap = df.astype(float).groupby('Voltage').mean()['Capacity']
 
@@ -666,7 +655,12 @@ def halfcycles_from_cycle(df, cycle):
     # Determines which half cycles correspond to a given full cycle.
     try:
         mask = df['full cycle'] == cycle
-        return list(df['half cycle'][mask].unique())
+        hc = list(df['half cycle'][mask].unique())
+        # The 0th half cycle is rest at the beginning of the test
+        # and should not be returned for the 0th full cycle
+        if 0 in hc:
+            hc.remove(0)
+        return hc
     except TypeError:
         print("Invalid type for cycle number.")
 
