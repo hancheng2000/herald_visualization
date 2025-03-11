@@ -493,3 +493,121 @@ def plot_dqdv(
     if labels:
         ax.legend(custom_lines, labels)
     return fig, ax
+
+
+import plotly.graph_objects as go
+import plotly.express as px
+
+def plot_cycling_plotly(dfs, cycles='all', labels=None, colormap=None,
+                        capacity_col='Specific Capacity Total AM',
+                        voltage_col='Voltage', halfcycles_from_cycle=None):
+    """
+    Create an interactive Plotly figure to display voltage vs. capacity cycling data.
+    
+    Parameters:
+      dfs (pandas.DataFrame or dict): DataFrame(s) to plot.
+      cycles (list or 'all'): Which full cycles to include.
+      labels (list): Optional labels for each cycle.
+      colormap (str): Name of a Plotly color sequence; if None, defaults are used.
+      capacity_col (str): Column for capacity data.
+      voltage_col (str): Column for voltage data.
+      halfcycles_from_cycle (function): A function that takes (df, cycle) and returns a list
+                                        of half cycle identifiers.
+      
+    Returns:
+      fig: A Plotly Figure with an update menu to select cycles.
+    """
+    # Use the DataFrame from the dict if needed
+    if isinstance(dfs, dict):
+        df = list(dfs.values())[0]
+    else:
+        df = dfs
+
+    # Determine cycles to plot
+    if cycles == 'all':
+        cycles = sorted(df['full cycle'].unique())
+    else:
+        cycles = list(cycles)
+    
+    # Default labels if none provided
+    if not labels:
+        labels = [f'Cycle {c}' for c in cycles]
+    
+    # Pick colors: use Plotly's default qualitative colors
+    default_colors = px.colors.qualitative.Plotly
+    n_colors = len(default_colors)
+    colors = [default_colors[i % n_colors] for i in range(len(cycles))]
+    
+    fig = go.Figure()
+    
+    # Dictionary to store which trace indices belong to which cycle.
+    visibility_dict = {}
+    trace_idx = 0
+    
+    for cycle_idx, cycle in enumerate(cycles):
+        # Get the halfcycles for the given cycle.
+        if halfcycles_from_cycle is not None:
+            halfcycles = halfcycles_from_cycle(df, cycle)
+        else:
+            # If no helper is provided, assume one trace per cycle.
+            halfcycles = [cycle]
+        
+        # Save indices for current cycle.
+        visibility_dict[cycle] = []
+        for halfcycle in halfcycles:
+            # Select the rows corresponding to the half cycle
+            mask = df['half cycle'] == halfcycle
+            df1 = df.loc[mask]
+            # Remove points with zero capacity
+            df1 = df1.loc[df1['Capacity'] != 0]
+            if df1.empty:
+                continue
+            # Add a trace for this half cycle
+            fig.add_trace(go.Scatter(
+                x=df1[capacity_col],
+                y=df1[voltage_col],
+                mode='lines+markers',
+                name=f'Cycle {cycle}, Half {halfcycle}',
+                line=dict(color=colors[cycle_idx])
+            ))
+            visibility_dict[cycle].append(trace_idx)
+            trace_idx += 1
+    
+    # Create buttons for update menus.
+    # Each button will set visible only the traces for one cycle.
+    buttons = []
+    for cycle in cycles:
+        visible = [False] * len(fig.data)
+        for idx in visibility_dict.get(cycle, []):
+            visible[idx] = True
+        buttons.append(dict(
+            label=f'Cycle {cycle}',
+            method='update',
+            args=[{'visible': visible},
+                  {'title': f'Cycle {cycle} Data'}]
+        ))
+    
+    # Add an "All" button to show all traces
+    visible_all = [True] * len(fig.data)
+    buttons.insert(0, dict(
+        label='All',
+        method='update',
+        args=[{'visible': visible_all},
+              {'title': 'All Cycles'}]
+    ))
+    
+    fig.update_layout(
+        updatemenus=[dict(
+            active=0,
+            buttons=buttons,
+            x=1.1,
+            y=1.15,
+            xanchor='right',
+            yanchor='top'
+        )],
+        xaxis_title=capacity_col,
+        yaxis_title=voltage_col,
+        title="Cycling Data"
+    )
+    
+    return fig
