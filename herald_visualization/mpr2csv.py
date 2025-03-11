@@ -221,7 +221,7 @@ def cycle_mpr2csv(
     df = pd.DataFrame()
     home_dir = os.getcwd()
     os.chdir(dir_name)
-    print(f"Running in {dir_name}")
+    print(f"\nRunning in {dir_name}")
     
     # Import data and settings
     if os.path.isfile(listfile):
@@ -275,7 +275,6 @@ def cycle_mpr2csv(
         cycle_summary.to_csv(cycle_summary_csv_filename)
         # print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
     
-    print("")
     os.chdir(home_dir)
     return df
 

@@ -248,7 +248,8 @@ def plot_cycling(
         fig=None,
         ax=None,
         subplots_kwargs={},
-        plot_kwargs={}
+        plot_kwargs={},
+        legend_kwargs={}
     ):
     """
     Plot voltage vs. capacity cycling data from one or more cells.
@@ -338,7 +339,7 @@ def plot_cycling(
     ax.set_ylabel(voltage_label)
     
     if labels:
-        ax.legend(custom_lines, labels)
+        ax.legend(custom_lines, labels, **legend_kwargs)
     return fig, ax
 
 def plot_dqdv(
