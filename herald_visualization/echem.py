@@ -529,6 +529,7 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
     - 'Discharge Capacity': The maximum discharge capacity for the cycle
     - 'Charge Capacity': The maximum charge capacity for the cycle
     - 'CE': The charge efficiency for the cycle (Discharge Capacity/Charge Capacity)
+    - 'Energy Efficiency': The energy efficiency for the cycle (Discharge Energy/Charge Energy)
     - 'Specific Discharge Capacity': The maximum specific discharge capacity for the cycle
     - 'Specific Charge Capacity': The maximum specific charge capacity for the cycle
     - 'Areal Discharge Capacity': The maximum specific discharge capacity for the cycle
@@ -591,6 +592,8 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
             # Time-weighted average of current/power only among the points in the given half cycle where the cell is not resting
             summary_df.loc[cycle, 'Average Discharge Current'] = np.average(df.loc[mask & dis_mask]['Current'], weights=df.loc[mask & dis_mask]['dt'])
             summary_df.loc[cycle, 'Average Discharge Power'] = np.average(df.loc[mask & dis_mask]['Power'], weights=df.loc[mask & dis_mask]['dt'])
+        summary_df['Average Discharge Voltage'] = summary_df['Discharge Energy']/summary_df['Discharge Capacity']
+        # Normalized metrics
         if mass > 0:
             summary_df['Specific Discharge Capacity'] = 1000*summary_df['Discharge Capacity']/mass
             summary_df['Specific Discharge Energy'] = 1000*summary_df['Discharge Energy']/mass
@@ -611,7 +614,6 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
     cha_index = df[cha_mask]['full cycle'].unique()
     if len(cha_index) > 0:
         summary_df.loc[cha_index, 'Charge Capacity'] = df[cha_mask].groupby('full cycle')['Capacity'].max()
-        summary_df['CE'] = summary_df['Discharge Capacity']/summary_df['Charge Capacity']
         cha_cycles = df.loc[df.index[cha_mask]]['half cycle'].unique()
         for halfcycle in cha_cycles:
             mask = df['half cycle'] == halfcycle
@@ -627,12 +629,16 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
             # Time-weighted average of current only among the points in the given half cycle where the cell is not resting
             summary_df.loc[cycle, 'Average Charge Current'] = np.average(df.loc[mask & cha_mask]['Current'], weights=df.loc[mask & cha_mask]['dt'])
             summary_df.loc[cycle, 'Average Charge Power'] = np.average(df.loc[mask & cha_mask]['Power'], weights=df.loc[mask & cha_mask]['dt'])
+        summary_df['Average Charge Voltage'] = summary_df['Charge Energy']/summary_df['Charge Capacity']
+        # Discharge/charge metrics
+        summary_df['CE'] = summary_df['Discharge Capacity']/summary_df['Charge Capacity']
+        summary_df['Energy Efficiency'] = summary_df['Discharge Energy']/summary_df['Charge Energy']
+        # Normalized metrics
         if mass > 0:
             summary_df['Specific Charge Capacity'] = 1000*summary_df['Charge Capacity']/mass
             summary_df['Specific Charge Energy'] = 1000*summary_df['Charge Energy']/mass
             summary_df['Specific Average Charge Current'] = 1000*summary_df['Average Charge Current']/mass
-            summary_df['Specific Average Charge Power'] = 1000*summary_df['Average Charge Power']/mass
-            
+            summary_df['Specific Average Charge Power'] = 1000*summary_df['Average Charge Power']/mass    
         if full_mass > 0:
             summary_df['Specific Charge Capacity Total AM'] = 1000*summary_df['Charge Capacity']/full_mass
             summary_df['Specific Charge Energy Total AM'] = 1000*summary_df['Charge Energy']/full_mass
@@ -643,11 +649,6 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
             summary_df['Areal Charge Energy'] = summary_df['Charge Energy']/area
             summary_df['Areal Average Charge Current'] = summary_df['Average Charge Current']/area
             summary_df['Areal Average Charge Power'] = summary_df['Average Charge Power']/area
-    
-    if 'Discharge Energy' in summary_df.columns and 'Discharge Capacity' in summary_df.columns:
-        summary_df['Average Discharge Voltage'] = summary_df['Discharge Energy']/summary_df['Discharge Capacity']
-    if 'Charge Energy' in summary_df.columns and 'Charge Capacity' in summary_df.columns:
-        summary_df['Average Charge Voltage'] = summary_df['Charge Energy']/summary_df['Charge Capacity']
 
     return summary_df
 
