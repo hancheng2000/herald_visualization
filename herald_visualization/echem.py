@@ -63,7 +63,7 @@ def echem_file_loader(filepath,
     """
     extension = os.path.splitext(filepath)[-1].lower()
     
-    # Biologic file
+    # Biologic .mpr file
     if extension == '.mpr':
         gal_file = MPRfile(os.path.join(filepath))
         df = pd.DataFrame(data=gal_file.data)
@@ -147,24 +147,37 @@ def echem_file_loader(filepath,
     elif extension in (".nda", ".ndax"):
         df = neware_reader(filepath)
 
-    # If the file is a csv previously processed by navani
-    # Check for the columns that are expected (Capacity, Voltage, Current, Cycle numbers, state)
+    # If the file is a csv previously processed by navani or exported by BT-Export
+    # Check for the columns that are expected in each case
     elif extension == '.csv':
-        df = pd.read_csv(filepath, 
-                         index_col=0,
-                         dtype={'Time': np.float64, 'Capacity': np.float64, 'Voltage': np.float64, 'Current': np.float64,
-                                'full cycle': np.int32, 'half cycle': np.int32, 'state': np.int16})
-        expected_columns = ['Capacity', 'Voltage', 'half cycle', 'full cycle', 'Current', 'state']
-        if not all(col in df.columns for col in expected_columns):
+        # Import just the first row to check which format the columns fit
+        df_col = pd.read_csv(filepath, nrows=0, sep=None, engine='python')
+        navani_expected_columns = ['Capacity', 'Voltage', 'half cycle', 'full cycle', 'Current', 'state']
+        btexport_expected_columns = ['Sample Index', 'Time / s', 'U / V', 'I / A', 'Capacity / C']
+        if all(col in df_col.columns for col in navani_expected_columns):
+            df = pd.read_csv(filepath, 
+                            index_col=0,
+                            dtype={'Time': np.float64, 'Capacity': np.float64, 'Voltage': np.float64, 'Current': np.float64,
+                                    'full cycle': np.int32, 'half cycle': np.int32, 'state': np.int16})
+        elif all(col in df_col.columns for col in btexport_expected_columns):
+            df = pd.read_csv(filepath,
+                             index_col=0,
+                             sep=';',
+                             usecols=btexport_expected_columns,
+                             dtype={'Time / s': np.float64, 'U / V': np.float64, 'I / A': np.float64, 'Capacity / C': np.float64})
+            df['Time / s'] += time_offset
+            # Concatenate if df_to_append_to exists, otherwise it will be silently dropped
+            df = pd.concat([df_to_append_to, df], ignore_index=True)
+            if processing:
+                df.sort_values('Time / s', inplace=True)
+                df = bt_export_processing(df)
+        else:
             raise ValueError('Columns do not match expected columns for navani processed csv')
-        
+
     # If it's a filetype not seen before raise an error
     else:
         print(extension)
-        raise RuntimeError("Filetype {extension} not recognised.")
-
-    if processing:
-        df_post_process(df)
+        raise RuntimeError(f"Filetype {extension} not recognised.")
 
     return df
 
@@ -268,15 +281,16 @@ def biologic_processing(df):
     if 'time/s' in df.columns:
         df['Time'] = df['time/s']
         df['dt'] = np.diff(df['Time'], prepend=0)
+    df.rename(columns = {'Ewe/V':'Voltage'}, inplace=True)
 
     # If current has been correctly exported then we can use that
-    if('I/mA' in df.columns) and ('Ewe/V' in df.columns):
+    if('I/mA' in df.columns) and ('Voltage' in df.columns):
         df['Current'] = df['I/mA']
-        df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
+        df['dV'] = np.diff(df['Voltage'], prepend=df['Voltage'][0])
         df['state'] = df['Current'].map(lambda x: state_from_current(x))
-    elif('<I>/mA' in df.columns) and ('Ewe/V' in df.columns):
+    elif('<I>/mA' in df.columns) and ('Voltage' in df.columns):
         df['Current'] = df['<I>/mA']
-        df['dV'] = np.diff(df['Ewe/V'], prepend=df['Ewe/V'][0])
+        df['dV'] = np.diff(df['Voltage'], prepend=df['Voltage'][0])
         df['state'] = df['Current'].map(lambda x: state_from_current(x))
     # Otherwise, add the current column that galvani can't (sometimes) export for some reason
     elif ('dt' in df.columns) and ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns):
@@ -301,7 +315,7 @@ def biologic_processing(df):
 
     # It's preferable to use dQ or dq to avoid some issues from EC-lab resetting
     # the capacity values within a half cycle
-    if ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns)  and ('half cycle' in df.columns):
+    if ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns) and ('half cycle' in df.columns):
         if 'dQ/mA.h' not in df.columns:
             df.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
         df['Half cycle cap'] = abs(df['dQ/mA.h'])
@@ -310,26 +324,55 @@ def biologic_processing(df):
             cycle_idx = df.index[mask]
             df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, 'Half cycle cap'].cumsum()
         # df.rename(columns = {'Half cycle cap':'Capacity'}, inplace = True)
-        df.rename(columns = {'Ewe/V':'Voltage'}, inplace = True)
-        return df
     elif ('(Q-Qo)/C' in df.columns) and ('half cycle' in df.columns):
         for cycle in df['half cycle'].unique():
             mask = df['half cycle'] == cycle
             cycle_idx = df.index[mask]
             df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, '(Q-Qo)/C'] - df.loc[cycle_idx[0], '(Q-Qo)/C']
-        df.rename(columns = {'Ewe/V':'Voltage'}, inplace = True)
-        return df
     elif ('Q charge/discharge/mA.h' in df.columns) and ('half cycle' in df.columns):
         df['Capacity'] = abs(df['Q charge/discharge/mA.h'])
         # Each half cycle's capacity should start at 0
         initial_capacity_by_halfcycle = df.groupby('half cycle')['Capacity'].first()
         df['Capacity'] = df.apply(lambda row: row['Capacity'] - initial_capacity_by_halfcycle[row['half cycle']], axis=1)
-        df.rename(columns = {'Ewe/V':'Voltage'}, inplace = True)
-        return df
     else:
-        print('Warning: unhandled column layout. No capacity or charge columns found.')
-        df.rename(columns = {'Ewe/V':'Voltage'}, inplace = True)
-        return df
+        print("Warning: unhandled column layout. No capacity or charge columns found.")
+    return df
+
+def bt_export_processing(df):
+    """
+    Process the given DataFrame to correct units and calculate capacity and cycle changes. Works for dataframes from the BT-Export .csv files.
+
+    Args:
+        df (pandas.DataFrame): The input DataFrame containing the data.
+
+    Returns:
+        pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
+    """
+    if 'Time / s' in df.columns:
+        df.rename(columns = {'Time / s':'Time'}, inplace = True)
+        df['dt'] = np.diff(df['Time'], prepend=0)
+
+    # Convert units in the current columns
+    if('I / A' in df.columns) and ('U / V' in df.columns):
+        df['Current'] = df['I / A']*1000 # Convert into mA
+        df.rename(columns = {'U / V':'Voltage'}, inplace = True)
+        df['dV'] = np.diff(df['Voltage'], prepend=df['Voltage'][0])
+        df['state'] = df['Current'].map(lambda x: state_from_current(x))
+    else:
+        print("Lacking necessary columns to determine state.")
+
+    df['cycle change'] = False
+    if 'state' in df.columns:
+        not_rest_idx = df[df['state'] != 0].index
+        df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
+    df['half cycle'] = (df['cycle change'] == True).cumsum()
+
+    # Convert units in charge column to mAh
+    if 'Capacity / C' in df.columns:
+        df['Capacity'] = df['Capacity / C']/3.6
+    else:
+        print("Warning: unhandled column layout. No capacity column found.")
+    return df
 
 def ivium_processing(df):
     """

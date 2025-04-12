@@ -1,7 +1,10 @@
-import os, glob
+import os, glob, sys
 from herald_visualization.mpr2csv import cycle_mpr2csv
 
-process_all_files = False # If False, only analyze files with new data since last being processed
+if len(sys.argv) > 1 and sys.argv[1] == '-a': # -a can be entered as a switch following the script name when executing
+    process_all_files = True # Analyze every file located
+else:
+    process_all_files = False # Only analyze fresh data
 base_path = os.getcwd()
 
 # Check for a file defining the path to the local system's data directory
@@ -21,6 +24,7 @@ else:
     f.close()
 
 glob_list = glob.glob(r'**/*CC[0-9][0-9][0-9][A-Z]*/', root_dir=root_dir)
+glob_list.sort() # Sorting alphanumerically makes it easier to determine how far along the batch is while running
 run_count = 0
 for path in glob_list:
     full_path = os.path.join(root_dir, path)
@@ -30,7 +34,9 @@ for path in glob_list:
             processed_time = max([os.path.getmtime(file) for file in output_files])
         else:
             processed_time = 0 # Makes program consider the (nonexistent) summary file as outdated
-        latest_data_time = max([os.path.getmtime(file) for file in glob.glob(os.path.join(full_path, '*.mpr'))])
+        data_files = glob.glob(os.path.join(full_path, '*.mpr')) + glob.glob(os.path.join(full_path, '*.csv'))
+        # Looks for both .mpr files from EC-Lab and .csv files from BT-Export
+        latest_data_time = max([os.path.getmtime(file) for file in data_files])
         if latest_data_time > processed_time or process_all_files:
             cycle_mpr2csv(full_path)
             run_count += 1

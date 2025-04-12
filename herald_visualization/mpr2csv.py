@@ -6,6 +6,7 @@ import glob
 import re
 import os
 import herald_visualization.echem as ec
+import json
 
 # Functions
 
@@ -107,7 +108,7 @@ def import_data_using_listfile(df, listfile='stitch.txt'):
     print(f"Imported using {listfile}.")
     return data_filenames, df
 
-def import_data_using_pattern(df):
+def import_data_using_pattern(df, extension):
     """
     Import data files by searching the data directory for files matching a pattern.
     It is expected that all of the files found by this method belong to the same test (not a restarted test).
@@ -115,25 +116,25 @@ def import_data_using_pattern(df):
     """
     data_filenames = []
 
-    # Keyword expected to be in each filename to be analyzed (if there are multiple .mpr files)
+    # Keyword expected to be in each filename to be analyzed (if there are multiple data files)
     search_keyword = '_GCPL_'
-    match_string = '*'+search_keyword+'*.mpr'
+    match_string = f'*{search_keyword}*.{extension}'
     data_filenames += glob.glob(match_string)
     # # Order files by time of creation so that they get added in sequence to the dataframe
     # data_filenames.sort(key=os.path.getctime)
     
     # Tests that should not be used even if they are the only ones found
-    blacklist = ['EIS_', '_OCV_']
+    blacklist = ['EIS_', '_OCV_', 'summary_cycle']
     # Check whether no matches with search_keyword were found
     if len(data_filenames) == 0:
-        # If only one .mpr file was made by the test, it should be used even if it lacks the search_keyword
+        # If only one data file was made by the test, it should be used even if it lacks the search_keyword
         # as long as it does not contain any of the blacklisted keywords
-        data_filenames = [file for file in glob.glob('*.mpr') if not any(blacklist_item in file for blacklist_item in blacklist)]
+        data_filenames = [file for file in glob.glob(f'*.{extension}') if not any(blacklist_item in file for blacklist_item in blacklist)]
         if len(data_filenames) == 0:
-            print("No .mpr files found by auto-search.")
+            print(f"No .{extension} files found by auto-search.")
             return [], pd.DataFrame()
         elif len(data_filenames) > 1:
-            print("Too many .mpr files found by auto-search. Use a listfile to indicate which files to analyze.")
+            print(f"Too many .{extension} files found by auto-search. Use a listfile to indicate which files to analyze.")
             print(data_filenames)
             return [], pd.DataFrame()
 
@@ -147,49 +148,75 @@ def import_data_using_pattern(df):
     return data_filenames, df
 
 def settings_filename_from_data_filename(data_filename):
-    # Determine the settings filename that EC-lab would autogenerate for a given data filename
-    mpr_regex = r'(_\d{2}_[a-zA-Z]+)?_C\d{2}.mpr'
-    return re.sub(mpr_regex, '.mps', data_filename)
+    # Determine the settings filename that EC-Lab or BT-Export would autogenerate for a given data filename
+    file_extension = os.path.splitext(data_filename)[-1].lower()
+    if file_extension == '.mpr':
+        # Files created by EC-Lab
+        mpr_regex = r'(_\d{2}_[a-zA-Z]+)?_C\d{2}.mpr'
+        return re.sub(mpr_regex, '.mps', data_filename)
+    elif file_extension == '.csv':
+        # Files exported by BT-Export have the same filename for data and settings
+        return re.sub('.csv', '.json', data_filename)
+    else:
+        print("Unsupported filetype for settings file.")
+        return None
 
 def import_settings(settings_filename):
-    # Imports info about the cell from the .mps settings file.
+    # Imports info about the cell from the settings file.
     # Key: variable in the settings file
     # Val: string in the associated line of the settings file
-    settings_keys = {
-        'active_material_mass': "Mass of active material",
-        'x_at_mass': " at x = ",
-        'empty_mol_weight': "Molecular weight of active material",
-        'interc_weight': "Atomic weight of intercalated ion",
-        'x_at_start': "Acquisition started at",
-        'e_per_ion': "Number of e- transfered per intercalated ion",
-        'surface_area': "Electrode surface area"
-    }
-    val_regex = r'\d+\.?\d*'
+    # Handles both .mps files from EC-Lab and .json files from BT-Export
+    file_extension = os.path.splitext(settings_filename)[-1].lower()
+    val_regex = r'\d+\.?\d*' # Regex for numeric values
     cell_props = {}
 
     try:
-        with open(settings_filename, 'r', errors='ignore') as file:
-            # Iterate through settings file to fill in active material mass and other cell parameters
-            i = 0
-            while True:
-                i += 1
-                line = file.readline()
+        if file_extension == '.mps':
+            settings_keys = {
+                'active_material_mass': "Mass of active material",
+                'x_at_mass': " at x = ",
+                'empty_mol_weight': "Molecular weight of active material",
+                'interc_weight': "Atomic weight of intercalated ion",
+                'x_at_start': "Acquisition started at",
+                'e_per_ion': "Number of e- transfered per intercalated ion",
+                'surface_area': "Electrode surface area"
+            }
 
-                if not line:
-                    break
+            with open(settings_filename, 'r', errors='ignore') as file:
+                # Iterate through settings file to fill in active material mass and other cell parameters
+                i = 0
+                while True:
+                    i += 1
+                    line = file.readline()
+                    if not line:
+                        break
+                    else:
+                        new_key = [key for key, val in settings_keys.items() if val in line]
+                        if new_key:
+                            match = re.findall(val_regex, line)
+                            # The final matching string is used
+                            cell_props[new_key[0]] = float(match[-1])         
+                return cell_props
+        elif file_extension == '.json':
+            settings_keys = {
+                'active_material_mass': "mass of active material",
+                'x_at_mass': "x mass",
+                'empty_mol_weight': "molecular weight",
+                'interc_weight': "intercalated ion molecular weight of active material",
+                'x_at_start': "x0",
+                'e_per_ion': "number of electrons",
+                'surface_area': "surface area"
+            }
+            with open(settings_filename, 'r', errors='ignore') as file:
+                settings = json.load(file)
+                for key, val in settings_keys.items():
+                    match = re.findall(val_regex, settings['dutType'][val])
+                    cell_props[key] = float(match[-1])
+                return cell_props
 
-                else:
-                    new_key = [key for key, val in settings_keys.items() if val in line]
-                    if new_key:
-                        match = re.findall(val_regex, line)
-                        # The final matching string is used
-                        cell_props[new_key[0]] = float(match[-1])
-            
-            return cell_props
-      
     except:
         print("Unable to read settings file.")
-
+        
 def total_AM_mass(cell_props):
     """
     Uses cell properties imported from a settings file to convert the cathode AM mass
@@ -226,22 +253,24 @@ def cycle_mpr2csv(
     # Import data and settings
     if os.path.isfile(listfile):
         data_filenames, df = import_data_using_listfile(df=df, listfile=listfile)
-    else:
-        data_filenames, df = import_data_using_pattern(df=df)
+    elif len(glob.glob('*.mpr')) > 0:
+        data_filenames, df = import_data_using_pattern(df=df, extension='mpr')
+    elif len(glob.glob('*.csv')) > 0:
+        data_filenames, df = import_data_using_pattern(df=df, extension='csv')
     
     # Break if data import is unsuccessful
-    if len(df) == 0:
+    if df.empty:
         return None
     # Otherwise continue
     print(f"Data file(s): {data_filenames}")
 
     # Check that all test files came from the same settings file, i.e. test
-    mps_filenames = [settings_filename_from_data_filename(filename) for filename in data_filenames]
-    if len(set(mps_filenames)) > 1:
+    settings_filenames = [settings_filename_from_data_filename(filename) for filename in data_filenames]
+    if len(set(settings_filenames)) > 1:
         print("Auto-search found files from multiple tests. The first test's settings file is being used. A listfile may be needed if not already present.")
     # Assume that the cell characteristics are the same in all settings files,
     # only look at settings file associated with first data file
-    settings_filename = mps_filenames[0]
+    settings_filename = settings_filenames[0]
     cell_props = import_settings(settings_filename)
     print(f"Settings file: {settings_filename}")
 
@@ -258,12 +287,12 @@ def cycle_mpr2csv(
     else:
         print(f"No cell properties imported.")
         df = ec.df_post_process(df)
-    # print(df)
 
     # Export navani-processed dataframe as a .csv for later use
-    # Path for .csv with same filename as .mps, based on .mpr
+    # Path for .csv with same filename as .mps or .json
     os.makedirs('outputs', exist_ok=True)
-    output_filename = settings_filename.replace('.mps','.csv')
+    settings_extension = os.path.splitext(settings_filename)[-1].lower()
+    output_filename = settings_filename.removesuffix(settings_extension) + '.csv'
     data_csv_filename = os.path.join('outputs', output_filename)
     df.to_csv(data_csv_filename)
     print(f"CSV exported to: {data_csv_filename}")
