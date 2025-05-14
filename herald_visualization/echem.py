@@ -153,7 +153,7 @@ def echem_file_loader(filepath,
         # Import just the first row to check which format the columns fit
         df_col = pd.read_csv(filepath, nrows=0, sep=None, engine='python')
         navani_expected_columns = ['Capacity', 'Voltage', 'half cycle', 'full cycle', 'Current', 'state']
-        btexport_expected_columns = ['Sample Index', 'Time / s', 'U / V', 'I / A', 'Capacity / C']
+        btexport_expected_columns = ['Sample Index', 'Time / s', 'U / V', 'I / A', 'Q / C']
         if all(col in df_col.columns for col in navani_expected_columns):
             df = pd.read_csv(filepath, 
                             index_col=0,
@@ -164,7 +164,7 @@ def echem_file_loader(filepath,
                              index_col=0,
                              sep=';',
                              usecols=btexport_expected_columns,
-                             dtype={'Time / s': np.float64, 'U / V': np.float64, 'I / A': np.float64, 'Capacity / C': np.float64})
+                             dtype={'Time / s': np.float64, 'U / V': np.float64, 'I / A': np.float64, 'Q / C': np.float64})
             df['Time / s'] += time_offset
             # Concatenate if df_to_append_to exists, otherwise it will be silently dropped
             df = pd.concat([df_to_append_to, df], ignore_index=True)
@@ -318,12 +318,11 @@ def biologic_processing(df):
     if ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns) and ('half cycle' in df.columns):
         if 'dQ/mA.h' not in df.columns:
             df.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
-        df['Half cycle cap'] = abs(df['dQ/mA.h'])
+        df['|dQ|'] = abs(df['dQ/mA.h'])
         for cycle in df['half cycle'].unique():
             mask = df['half cycle'] == cycle
             cycle_idx = df.index[mask]
-            df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, 'Half cycle cap'].cumsum()
-        # df.rename(columns = {'Half cycle cap':'Capacity'}, inplace = True)
+            df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, '|dQ|'].cumsum()
     elif ('(Q-Qo)/C' in df.columns) and ('half cycle' in df.columns):
         for cycle in df['half cycle'].unique():
             mask = df['half cycle'] == cycle
@@ -367,9 +366,15 @@ def bt_export_processing(df):
         df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
     df['half cycle'] = (df['cycle change'] == True).cumsum()
 
-    # Convert units in charge column to mAh
-    if 'Capacity / C' in df.columns:
-        df['Capacity'] = df['Capacity / C']/3.6
+    # It's preferable to use dQ or dq to avoid some issues from EC-lab resetting
+    # the capacity values within a half cycle
+    if 'Q / C' in df.columns:
+        df['dQ'] = np.diff(df['Q / C'], prepend=0)/3.6 # Calculate dQ and convert units from C to mAh
+        df['|dQ|'] = abs(df['dQ'])
+        for cycle in df['half cycle'].unique():
+            mask = df['half cycle'] == cycle
+            cycle_idx = df.index[mask]
+            df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, '|dQ|'].cumsum()
     else:
         print("Warning: unhandled column layout. No capacity column found.")
     return df
