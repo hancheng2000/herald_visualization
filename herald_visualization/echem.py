@@ -584,7 +584,7 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
     - 'Areal Charge Capacity': The maximum specific charge capacity for the cycle
     - 'Average Discharge Voltage': The average discharge voltage for the cycle
     - 'Average Charge Voltage': The average charge voltage for the cycle
-    - 'Discharge Energy': The integral energy on discharge for the cycle
+    - 'Discharge Energy':  The integral energy on discharge for the cycle
     - 'Charge Energy': The integral energy of charge for the cycle
     - 'Discharge Overpotential': Overpotential as calculated by the relaxation after discharge
     - 'Charge Overpotential': Overpotential as calculated by the relaxation after charge

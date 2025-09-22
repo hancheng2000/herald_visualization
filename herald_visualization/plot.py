@@ -212,7 +212,7 @@ def parse_cycle_csv(dir_name,
                     summary_filename='cycle_summary'):
     csv_files = glob.glob(os.path.join(dir_name,'*.csv'))
     summary_file = os.path.join(dir_name,f'{summary_filename}.csv')
-    data_file = [file for file in csv_files if summary_filename not in file and 'PEIS' not in file][0]
+    data_file = [file for file in csv_files if summary_filename not in file][0]
     df = ec.echem_file_loader(data_file)
     try:
         df_sum = pd.read_csv(summary_file)
