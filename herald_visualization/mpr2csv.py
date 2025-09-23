@@ -94,7 +94,7 @@ def import_data_using_listfile(df, listfile='stitch.txt'):
         # Calculate time_offset from existing data in df
         if bool:
             try:
-                time_offset = df['time/s'].max()
+                time_offset = df['Time'].max()
             except KeyError: # Takes care of case where True appears before there is data present
                 time_offset = 0.0
         else:

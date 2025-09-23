@@ -18,8 +18,6 @@ res_col_dict = {'Voltage': 'Voltage',
 mpr_col_dict = {'Voltage': 'Ewe/V',
                 'Capacity': 'Capacity'}
 
-current_labels = ['Current', 'Current(A)', 'I /mA', 'Current/mA', 'I/mA', '<I>/mA']
-
 # Deciding on charge, discharge, and rest based on current direction
 def state_from_current(x):
     if x > 0:
@@ -67,11 +65,12 @@ def echem_file_loader(filepath,
     if extension == '.mpr':
         gal_file = MPRfile(os.path.join(filepath))
         df = pd.DataFrame(data=gal_file.data)
-        df['time/s'] += time_offset
+        df = standardize_time_label(df)
+        df['Time'] += time_offset
         # Concatenate if df_to_append_to exists, otherwise it will be silently dropped
         df = pd.concat([df_to_append_to, df], ignore_index=True)
         if processing:
-            df.sort_values('time/s', inplace=True)
+            df.sort_values('Time', inplace=True)
             df = biologic_processing(df)
 
     # arbin .res file - uses an sql server and requires mdbtools installed
@@ -159,17 +158,24 @@ def echem_file_loader(filepath,
                             index_col=0,
                             dtype={'Time': np.float64, 'Capacity': np.float64, 'Voltage': np.float64, 'Current': np.float64,
                                     'full cycle': np.int32, 'half cycle': np.int32, 'state': np.int16})
+            df['Time'] += time_offset
+            # Concatenate if df_to_append_to exists, otherwise it will be silently dropped
+            df = pd.concat([df_to_append_to, df], ignore_index=True)
+            if processing:
+                df.sort_values('Time', inplace=True)
+                df = bt_export_processing(df)
         elif all(col in df_col.columns for col in btexport_expected_columns):
             df = pd.read_csv(filepath,
                              index_col=0,
                              sep=';',
                              usecols=btexport_expected_columns,
                              dtype={'Time / s': np.float64, 'U / V': np.float64, 'I / A': np.float64, 'Q / C': np.float64})
-            df['Time / s'] += time_offset
+            df = standardize_time_label(df)
+            df['Time'] += time_offset
             # Concatenate if df_to_append_to exists, otherwise it will be silently dropped
             df = pd.concat([df_to_append_to, df], ignore_index=True)
             if processing:
-                df.sort_values('Time / s', inplace=True)
+                df.sort_values('Time', inplace=True)
                 df = bt_export_processing(df)
         else:
             raise ValueError('Columns do not match expected columns for navani processed csv')
@@ -179,6 +185,17 @@ def echem_file_loader(filepath,
         print(extension)
         raise RuntimeError(f"Filetype {extension} not recognised.")
 
+    return df
+
+def standardize_time_label(df):
+    # Makes it easier to concatenate tests of different types.
+    time_labels = ['time/s', 'time /s', 'Time / s']
+    for label in time_labels:
+        if label in df.columns:
+            df.rename(columns={label: 'Time'}, inplace=True)
+            break # Only rename the first match
+    if 'Time' in df.columns:
+        df['dt'] = np.diff(df['Time'], prepend=0)
     return df
 
 def df_post_process(df, mass=0, full_mass=0, area=0):
@@ -278,9 +295,6 @@ def biologic_processing(df):
     Returns:
         pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
     """
-    if 'time/s' in df.columns:
-        df['Time'] = df['time/s']
-        df['dt'] = np.diff(df['Time'], prepend=0)
     df.rename(columns = {'Ewe/V':'Voltage'}, inplace=True)
 
     # If current has been correctly exported then we can use that
@@ -347,9 +361,6 @@ def bt_export_processing(df):
     Returns:
         pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
     """
-    if 'Time / s' in df.columns:
-        df.rename(columns = {'Time / s':'Time'}, inplace = True)
-        df['dt'] = np.diff(df['Time'], prepend=0)
 
     # Convert units in the current columns
     if('I / A' in df.columns) and ('U / V' in df.columns):
@@ -599,7 +610,7 @@ def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
     Returns:
         pandas.DataFrame: The summary DataFrame with the calculated values.
     """
-    
+    current_labels = ['Current', 'Current(A)', 'I /mA', 'Current/mA', 'I/mA', '<I>/mA']
     # Figuring out which column is current
     if current_label is not None:
         df[current_label] = df[current_label].astype(float)
