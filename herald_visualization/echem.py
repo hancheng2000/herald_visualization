@@ -185,13 +185,21 @@ def echem_file_loader(filepath,
     df.sort_values(by='Time', inplace=True)
 
     df['cycle change'] = False
-    if 'state' in df.columns:
-        not_rest_idx = df[df['state'] != 0].index
+    not_rest_idx = df[df['state'] != 0].index
+    if len(not_rest_idx) > 0:
         df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
-        # TODO: catch exception from only having OCV data
     else:
-        print("State information missing. Analysis terminated.")
-        return None
+        # If nothing is found for not_rest_idx, then all points are at rest
+        # Therefore all the following values can be set to 0
+        df['cycle change'] = 0
+        df['half cycle'] = 0
+        df['full cycle'] = 0
+        df['Q'] = 0
+        df['Capacity'] = 0
+        df['Power'] = 0
+        print("No charge or discharge data found.")
+        return df
+
     df['half cycle'] = (df['cycle change'] == True).cumsum() # Each time a cycle change occurs, increment half cycle
     # Adding a full cycle column
     # 1 full cycle is charge then discharge; code considers which the test begins with
@@ -207,7 +215,6 @@ def echem_file_loader(filepath,
 
     # Calculate Q (running total capacity) and Capacity (capacity, reset each half cycle)
     df['Q'] = df['dQ'].cumsum()
-    # df['|dQ|'] = abs(df['dQ'])
     for cycle in df['half cycle'].unique():
         mask = (df['half cycle'] == cycle)
         cycle_idx = df[mask].index
