@@ -101,9 +101,9 @@ def import_data_using_listfile(df, listfile='stitch.txt'):
             time_offset = 0.0
         # Only do the full processing step on the last file to load, in order to speed up loading
         if i == len(data_filenames) - 1:
-            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, processing=True)
+            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, calc_cycles_and_cap=True)
         else:
-            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, processing=False)
+            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, calc_cycles_and_cap=False)
     
     print(f"Imported using {listfile}.")
     return data_filenames, df
@@ -141,10 +141,10 @@ def import_data_using_pattern(df, extension):
     for i, file in enumerate(data_filenames):
         # Only do the full processing step on the last file to load, in order to speed up loading
         if i == len(data_filenames) - 1:
-            df = ec.echem_file_loader(file, df_to_append_to=df, processing=True)
+            df = ec.echem_file_loader(file, df_to_append_to=df, calc_cycles_and_cap=True)
         else:
-            df = ec.echem_file_loader(file, df_to_append_to=df, processing=False)
-    
+            df = ec.echem_file_loader(file, df_to_append_to=df, calc_cycles_and_cap=False)
+
     return data_filenames, df
 
 def settings_filename_from_data_filename(data_filename):
@@ -286,7 +286,6 @@ def cycle_mpr2csv(
                                 area=area)
     else:
         print(f"No cell properties imported.")
-        df = ec.df_post_process(df)
 
     # Export navani-processed dataframe as a .csv for later use
     # Path for .csv with same filename as .mps or .json
@@ -298,6 +297,7 @@ def cycle_mpr2csv(
     print(f"CSV exported to: {data_csv_filename}")
 
     # Export a cycle summary .csv if multiple half cycles are present
+    # TODO: catch error when properties are not present
     if df['half cycle'].max() >= 1:
         cycle_summary = ec.cycle_summary(df, mass=mass, full_mass=full_mass, area=area)
         cycle_summary_csv_filename = os.path.join('outputs', 'cycle_summary.csv')
@@ -331,45 +331,3 @@ def eis_mpr2csv(
     home_dir = os.getcwd()
     df.to_csv(os.path.join(dir_name, 'outputs', file_name), index=False)
     return df
-
-
-# # Split data into sections based on current to figure out when relaxation is happening
-# i = 0
-# while i < len(data):
-
-#     while np.array(data['control/V/mA'])[i] < 0.0:
-#         i=i+1
-#     start_indices.append(i)
-
-#     while np.array(data['control/V/mA'])[i] == 0.0 and i <= len(data):
-#         i=i+1
-#         if i == len(data):
-#             break
-#     end_indices.append(i)
-
-
-# # Plot relaxation curves for each GITT relaxation
-# os.makedirs('relaxations', exist_ok=True)
-# for i in range(len(start_indices)):
-#     x_data = data['time/s'][start_indices[i]:end_indices[i]]/3600 - data['time/s'][start_indices[i]]/3600
-#     y_data = data['Ewe/V'][start_indices[i]:end_indices[i]]
-#     np.savetxt('relaxations/'+str(i)+'.csv', np.transpose([x_data, y_data]), delimiter=',')
-#     # popt, pcov = curve_fit(func, x_data, y_data, p0=popt, method='lm', maxfev=10000)
-#     # print(popt)
-#     # plt.plot(x_data, func(x_data, *popt), 'r-', label='fit')
-#     plt.plot(x_data, y_data, label='Data', color='black')
-#     plt.ylim(voltage_limits)
-#     plt.xlabel('Time (hr)')
-#     plt.ylabel('Voltage (v)')
-#     plt.title(str(i+1)+'th relaxation')
-#     plt.savefig('relaxations/'+str(i)+'.png')
-#     plt.close()
-
-# # Plot pseudo-OCV curve
-# plt.plot(-1*data['(Q-Qo)/mA.h'][np.array(end_indices)], data['Ewe/V'][np.array(end_indices)])
-# plt.ylim(voltage_limits)
-# plt.xlabel('Discharge capacity (mAh)')
-# plt.ylabel('Voltage (V)')
-# plt.title('Pseudo-OCV')
-# plt.savefig('plots/pseudo_OCV.png')
-# plt.close()

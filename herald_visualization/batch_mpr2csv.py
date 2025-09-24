@@ -23,6 +23,10 @@ else:
     f.write(root_dir)
     f.close()
 
+# Check for files inside the BCS905 subdirectory
+bcs_tests = glob.glob(r'**/BCS905/*CC[0-9][0-9][0-9][A-Z]*/', root_dir=root_dir)
+
+
 glob_list = glob.glob(r'**/*CC[0-9][0-9][0-9][A-Z]*/', root_dir=root_dir)
 glob_list.sort() # Sorting alphanumerically makes it easier to determine how far along the batch is while running
 run_count = 0

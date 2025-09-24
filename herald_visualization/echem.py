@@ -18,7 +18,7 @@ res_col_dict = {'Voltage': 'Voltage',
 mpr_col_dict = {'Voltage': 'Ewe/V',
                 'Capacity': 'Capacity'}
 
-# Deciding on charge, discharge, and rest based on current direction
+# Deciding on charge, discharge, and rest based on sign of current
 def state_from_current(x):
     if x > 0:
         return 1
@@ -33,45 +33,44 @@ def state_from_current(x):
 
 def echem_file_loader(filepath, 
                       df_to_append_to=None, 
-                      time_offset=0.0, 
-                      processing=True):
+                      time_offset=0.0,
+                      calc_cycles_and_cap=True):
     """
     Loads a variety of electrochemical filetypes and tries to construct the most useful measurements in a
-    consistent way, with consistent column labels. Outputs a dataframe with the original columns, and these constructed columns:
+    consistent way, with consistent column labels. Outputs a dataframe with these constructed columns:
     
-    - "state": 0 for rest, -1 for discharge, 1 for charge (defined by the current direction +ve or -ve)
-    - "half cycle": Counts the half cycles, rests are included with the preceding data
-    - "full cycle": Counts the full cycles, defined as a charge followed by a discharge
-    - "cycle change": Boolean column that is True when the state changes
-    - "Capacity": The capacity of the cell, each half cycle it resets to 0 - In general this will be in mAh - however it depends what unit the original file is in - Arbin Ah automatically converted to mAh
-    - "Voltage": The voltage of the cell
-    - "Current": The current of the cell - In general this will be in mA - however it depends what unit the original file is in
-    
-    From these measurements, everything you want to know about the electrochemistry can be calculated.
+    - Time: (unit: s) time from beginning of test
+    - dt: (unit: s) time since previous data point
+    - Cycle change: indicates an increment in cycle count
+    - half cycle: discharge and charge count as separate half cycles; rests are included with preceding data
+    - full cycle: defined as charge followed by discharge
+    - Voltage: (unit: V) cell voltage
+    - Current: (unit: mA) cell current, +ve for charge and -ve for discharge
+    - state: 1=charging, 0=rest, -1=discharging
+    - Power: (unit: mW) cell power, +ve for charge and -ve for discharge
+    - Capacity: (unit: mAh) capacity passed in a given half cycle (resets to 0 at beginning of each half cycle)
+    - Q-Q0: (unit: mAh) total capacity passed up to a given point in a test (increases during charge, decreases during discharge)
     
     Parameters:
         filepath (str): The path to the electrochemical file.
         The following parameters are only implemented for Biologic files:
         df_to_append_to (pd.DataFrame): DataFrame to append the newly loaded data to the end of, for combining multiple raw data files.
         time_offset (float): Amount to increase the time values of newly loaded data in order to stitch together raw data files.
-        processing (bool): If true, columns will be processed into the consistent form. False allows for performance boost when appending multiple files.
+        calc_cycles_and_cap (bool): True if the cycles and capacity should be calculated after appending the new data.
+            Set to True after the final piece of raw data has been imported when stitching files.
     
     Returns:
-        pandas.DataFrame: A dataframe with the original columns and the constructed columns.
+        pandas.DataFrame: A dataframe with the constructed columns.
+
+    The 2 dataframes that occur within each handler are raw (raw data as imported from the test file) and df (the processed data).
     """
     extension = os.path.splitext(filepath)[-1].lower()
     
     # Biologic .mpr file
     if extension == '.mpr':
         gal_file = MPRfile(os.path.join(filepath))
-        df = pd.DataFrame(data=gal_file.data)
-        df = standardize_time_label(df)
-        df['Time'] += time_offset
-        # Concatenate if df_to_append_to exists, otherwise it will be silently dropped
-        df = pd.concat([df_to_append_to, df], ignore_index=True)
-        if processing:
-            df.sort_values('Time', inplace=True)
-            df = biologic_processing(df)
+        raw = pd.DataFrame(data=gal_file.data)
+        df = biologic_processing(raw)
 
     # arbin .res file - uses an sql server and requires mdbtools installed
     # sudo apt get mdbtools for windows and mac
@@ -88,14 +87,14 @@ def echem_file_loader(filepath,
     # Currently .txt files are assumed to be from an ivium cycler - this may need to be changed
     # These have time, current and voltage columns only
     elif extension == '.txt':
-        df = pd.read_csv(os.path.join(filepath), sep='\t')
+        raw = pd.read_csv(os.path.join(filepath), sep='\t')
         # Checking columns are an exact match
-        if set(['time /s', 'I /mA', 'E /V']) - set(df.columns) == set([]):
-            df = ivium_processing(df)
+        if set(['time /s', 'I /mA', 'E /V']) - set(raw.columns) == set([]):
+            df = ivium_processing(raw)
         else:
             raise ValueError('Columns do not match expected columns for an ivium .txt file')
 
-    # Landdt and Arbin can output .xlsx and .xls files
+    # Landt and Arbin can output .xlsx and .xls files
     elif extension in ['.xlsx', '.xls']:
         if extension == '.xlsx':
             xlsx = pd.ExcelFile(os.path.join(filepath), engine='openpyxl')
@@ -103,12 +102,12 @@ def echem_file_loader(filepath,
             xlsx = pd.ExcelFile(os.path.join(filepath))
 
         names = xlsx.sheet_names
-        # Use different land processing if all exported as one sheet (different versions of landdt software)
+        # Use different Landt processing if all exported as one sheet (different versions of Landt software)
         if len(names) == 1:
-            df = xlsx.parse(0)
-            df = new_land_processing(df)
+            raw = xlsx.parse(0)
+            df = new_landt_processing(raw)
 
-        # If Record is a sheet name, then it is a landdt file
+        # If Record is a sheet name, then it is a Landt file
         elif "Record" in names[0]:
             df_list = [xlsx.parse(0)]
             if not isinstance(df_list, list) or not isinstance(df_list[0], pd.DataFrame):
@@ -123,9 +122,9 @@ def echem_file_loader(filepath,
                 if not isinstance(sheet, pd.DataFrame):
                     raise RuntimeError("Sheet is not a dataframe; cannot continue parsing {filepath=}")
                 sheet.columns = col_names
-            df = pd.concat(df_list)
-            df.set_index('Index', inplace=True)
-            df = old_land_processing(df)
+            raw = pd.concat(df_list)
+            raw.set_index('Index', inplace=True)
+            df = old_landt_processing(raw)
 
         # If Channel is a sheet name, then it is an arbin file
         else:
@@ -137,8 +136,8 @@ def echem_file_loader(filepath,
                 if 'Channel' in name and 'Chart' not in name:
                     df_list.append(xlsx.parse(count))
             if len(df_list) > 0:
-                df = pd.concat(df_list)
-                df = arbin_excel(df)
+                raw = pd.concat(df_list)
+                df = arbin_excel(raw)
             else:
                 raise ValueError('Names of sheets not recognised')
             
@@ -151,39 +150,71 @@ def echem_file_loader(filepath,
     elif extension == '.csv':
         # Import just the first row to check which format the columns fit
         df_col = pd.read_csv(filepath, nrows=0, sep=None, engine='python')
-        navani_expected_columns = ['Capacity', 'Voltage', 'half cycle', 'full cycle', 'Current', 'state']
+        navani_expected_columns = ['Time', 'Current', 'Voltage', 'half cycle', 'full cycle', 'state', 'Capacity', 'Q']
         btexport_expected_columns = ['Sample Index', 'Time / s', 'U / V', 'I / A', 'Q / C']
         if all(col in df_col.columns for col in navani_expected_columns):
             df = pd.read_csv(filepath, 
                             index_col=0,
                             dtype={'Time': np.float64, 'Capacity': np.float64, 'Voltage': np.float64, 'Current': np.float64,
                                     'full cycle': np.int32, 'half cycle': np.int32, 'state': np.int16})
-            df['Time'] += time_offset
-            # Concatenate if df_to_append_to exists, otherwise it will be silently dropped
-            df = pd.concat([df_to_append_to, df], ignore_index=True)
-            if processing:
-                df.sort_values('Time', inplace=True)
-                df = bt_export_processing(df)
         elif all(col in df_col.columns for col in btexport_expected_columns):
-            df = pd.read_csv(filepath,
+            raw = pd.read_csv(filepath,
                              index_col=0,
                              sep=';',
                              usecols=btexport_expected_columns,
                              dtype={'Time / s': np.float64, 'U / V': np.float64, 'I / A': np.float64, 'Q / C': np.float64})
-            df = standardize_time_label(df)
-            df['Time'] += time_offset
-            # Concatenate if df_to_append_to exists, otherwise it will be silently dropped
-            df = pd.concat([df_to_append_to, df], ignore_index=True)
-            if processing:
-                df.sort_values('Time', inplace=True)
-                df = bt_export_processing(df)
+            df = bt_export_processing(raw)
         else:
-            raise ValueError('Columns do not match expected columns for navani processed csv')
+            raise ValueError('Columns do not match expected columns for navani-processed csv')
 
     # If it's a filetype not seen before raise an error
     else:
         print(extension)
         raise RuntimeError(f"Filetype {extension} not recognised.")
+
+    # Offset time and concatenate if df_to_append_to exists
+    # If df_to_append_to is None, this will just return df
+    df['Time'] += time_offset
+    df = pd.concat([df_to_append_to, df], ignore_index=True)
+
+    # Stop here if the cycles and capacity don't need to be calculated yet
+    if not calc_cycles_and_cap:
+        return df
+
+    # Sort by time before calculating cycle numbers, etc.
+    df.sort_values(by='Time', inplace=True)
+
+    df['cycle change'] = False
+    if 'state' in df.columns:
+        not_rest_idx = df[df['state'] != 0].index
+        df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
+        # TODO: catch exception from only having OCV data
+    else:
+        print("State information missing. Analysis terminated.")
+        return None
+    df['half cycle'] = (df['cycle change'] == True).cumsum() # Each time a cycle change occurs, increment half cycle
+    # Adding a full cycle column
+    # 1 full cycle is charge then discharge; code considers which the test begins with
+    # Find the first state that is not rest
+    initial_state = df.loc[not_rest_idx, 'state'].iloc[0]
+    if initial_state == -1: # Cell starts in discharge
+        df['full cycle'] = (df['half cycle']/2).apply(np.floor)
+    elif initial_state == 1: # Cell starts in charge
+        df['full cycle'] = (df['half cycle']/2).apply(np.ceil)
+    else:
+        print("Unexpected state in the first data point of half cycle 1.")
+        return None
+
+    # Calculate Q (running total capacity) and Capacity (capacity, reset each half cycle)
+    df['Q'] = df['dQ'].cumsum()
+    # df['|dQ|'] = abs(df['dQ'])
+    for cycle in df['half cycle'].unique():
+        mask = (df['half cycle'] == cycle)
+        cycle_idx = df[mask].index
+        df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, 'dQ'].abs().cumsum()
+
+    # Add a column for power
+    df['Power'] = df['Current']*df['Voltage']
 
     return df
 
@@ -200,7 +231,7 @@ def standardize_time_label(df):
 
 def df_post_process(df, mass=0, full_mass=0, area=0):
     """
-    Adds columns to an imported dataframe for full cycles, power, and areal/specific versions of capacity, current, and power.
+    Adds columns to an imported dataframe for areal/specific versions of capacity, current, and power.
 
     Args:
         df (pandas.DataFrame): The input DataFrame containing the imported data.
@@ -211,35 +242,21 @@ def df_post_process(df, mass=0, full_mass=0, area=0):
     Returns:
         pandas.DataFrame: The processed DataFrame with processed columns.
     """
-    # Adding a full cycle column
-    # 1 full cycle is charge then discharge; code considers which the test begins with
-    if 'half cycle' in df.columns:
-        # Find the first state that is not rest
-        initial_state = df.loc[df['state'] != 0]['state'].iloc[0]
-        
-        if initial_state == -1: # Cell starts in discharge
-            df['full cycle'] = (df['half cycle']/2).apply(np.floor)
-        elif initial_state == 1: # Cell starts in charge
-            df['full cycle'] = (df['half cycle']/2).apply(np.ceil)
-        else:
-            raise Exception("Unexpected state in the first data point of half cycle 1.")
-
-    # Adding a power column
-    if 'Current' and 'Voltage' in df.columns:
-        df['Power'] = df['Current']*df['Voltage']
-
     # Adding mass- and area-normalized columns if mass and area are provided
     # Ignore if defaults of 0.001 are present, since they result in absurdly high values
     if mass > 0.001:
         df['Specific Capacity'] = 1000*df['Capacity']/mass
+        df['Specific Q'] = 1000*df['Q']/mass
         df['Specific Current'] = 1000*df['Current']/mass
         df['Specific Power'] = 1000*df['Power']/mass
     if full_mass > 0.001 and mass > 0.001:
         df['Specific Capacity Total AM'] = 1000*df['Capacity']/full_mass
+        df['Specific Q Total AM'] = 1000*df['Q']/full_mass
         df['Specific Current Total AM'] = 1000*df['Current']/full_mass
         df['Specific Power Total AM'] = 1000*df['Power']/full_mass        
     if area > 0.001:
         df['Areal Capacity'] = df['Capacity']/area
+        df['Areal Q'] = df['Q']/area
         df['Areal Current'] = df['Current']/area
         df['Areal Power'] = df['Power']/area
 
@@ -285,109 +302,85 @@ def arbin_res(df):
 
     return df
 
-def biologic_processing(df):
+def biologic_processing(raw):
     """
-    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the galvani MPRfile for Biologic .mpr files.
+    Process the given DataFrame to generate a standardized output DataFrame. 
+    Works for dataframes from the galvani MPRfile for Biologic .mpr files.
 
     Args:
-        df (pandas.DataFrame): The input DataFrame containing the data.
+        raw (pandas.DataFrame): The input DataFrame containing the raw data.
 
     Returns:
-        pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
+        pandas.DataFrame: The processed DataFrame with standardized columns: Time, dt, Voltage, Current, dQ, and state
+        (See echem_file_loader for definitions and units of these columns)
     """
-    df.rename(columns = {'Ewe/V':'Voltage'}, inplace=True)
+    df = pd.DataFrame()
+    df['Time'] = raw['time/s']
+    df['dt'] = np.diff(df['Time'], prepend=0)
+    df['Voltage'] = raw['Ewe/V']
 
-    # If current has been correctly exported then we can use that
-    if('I/mA' in df.columns) and ('Voltage' in df.columns):
-        df['Current'] = df['I/mA']
-        df['dV'] = np.diff(df['Voltage'], prepend=df['Voltage'][0])
-        df['state'] = df['Current'].map(lambda x: state_from_current(x))
-    elif('<I>/mA' in df.columns) and ('Voltage' in df.columns):
-        df['Current'] = df['<I>/mA']
-        df['dV'] = np.diff(df['Voltage'], prepend=df['Voltage'][0])
-        df['state'] = df['Current'].map(lambda x: state_from_current(x))
-    # Otherwise, add the current column that galvani can't (sometimes) export for some reason
-    elif ('dt' in df.columns) and ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns):
-        if 'dQ/mA.h' not in df.columns:
-            df.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
-        df['Current'] = df['dQ/mA.h']/(df['dt']/3600)
-        df.fillna({'Current': 0}, inplace=True) # Prevents singularities when joining multiple files
-        df['state'] = df['Current'].map(lambda x: state_from_current(x))
-    elif ('dt' in df.columns) and ('Q charge/discharge/mA.h' in df.columns):
-        df['dQ/mA.h'] = np.diff(df['Q charge/discharge/mA.h'], prepend=0)
-        df['Current'] = df['dQ/mA.h']/(df['dt']/3600)
-        df.fillna({'Current': 0}, inplace=True) # Prevents singularities when joining multiple files
-        df['state'] = df['Current'].map(lambda x: state_from_current(x))
+    # Determine incremental charge passed between each data point
+    # +ve if charging, -ve if discharging
+    # First see if raw data file contains dQ
+    if ('dQ/mA.h' in raw.columns or 'dq/mA.h' in raw.columns):
+        if 'dQ/mA.h' not in raw.columns:
+            raw.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
+        df['dQ'] = raw['dQ/mA.h']
+    # Else compute it from the integrated capacity Q-Qo
+    elif ('(Q-Qo)/C' in raw.columns):
+        df['dQ'] = np.diff(raw['(Q-Qo)/C'], prepend=0)
+    # Otherwise dQ can be computed from current later
+    if ('I/mA' in raw.columns or '<I>/mA' in raw.columns):
+        if 'I/mA' not in raw.columns:
+            raw.rename(columns={'<I>/mA': 'I/mA'}, inplace=True)
+        df['Current'] = raw['I/mA']
+        # Compute dQ from current if it wasn't present in the data file
+        if 'dQ' not in df.columns:
+            df['dQ'] = df['Current']*df['dt']
+    elif 'dQ' in df.columns:
+        # If current wasn't correctly exported, calculate it from dQ
+        # Also convert infinities caused by dt of 0 to current of 0 to prevent issues down the line
+        df['Current'] = (df['dQ']/df['dt']).replace([np.inf, -np.inf], 0)
     else:
-        print("Lacking necessary columns to determine state.")
-
-    df['cycle change'] = False
-    if 'state' in df.columns:
-        not_rest_idx = df[df['state'] != 0].index
-        df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
-    df['half cycle'] = (df['cycle change'] == True).cumsum()
-
-    # It's preferable to use dQ or dq to avoid some issues from EC-lab resetting
-    # the capacity values within a half cycle
-    if ('dQ/mA.h' in df.columns or 'dq/mA.h' in df.columns) and ('half cycle' in df.columns):
-        if 'dQ/mA.h' not in df.columns:
-            df.rename(columns={'dq/mA.h': 'dQ/mA.h'}, inplace=True)
-        df['|dQ|'] = abs(df['dQ/mA.h'])
-        for cycle in df['half cycle'].unique():
-            mask = df['half cycle'] == cycle
-            cycle_idx = df.index[mask]
-            df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, '|dQ|'].cumsum()
-    elif ('(Q-Qo)/C' in df.columns) and ('half cycle' in df.columns):
-        for cycle in df['half cycle'].unique():
-            mask = df['half cycle'] == cycle
-            cycle_idx = df.index[mask]
-            df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, '(Q-Qo)/C'] - df.loc[cycle_idx[0], '(Q-Qo)/C']
-    elif ('Q charge/discharge/mA.h' in df.columns) and ('half cycle' in df.columns):
-        df['Capacity'] = abs(df['Q charge/discharge/mA.h'])
-        # Each half cycle's capacity should start at 0
-        initial_capacity_by_halfcycle = df.groupby('half cycle')['Capacity'].first()
-        df['Capacity'] = df.apply(lambda row: row['Capacity'] - initial_capacity_by_halfcycle[row['half cycle']], axis=1)
-    else:
-        print("Warning: unhandled column layout. No capacity or charge columns found.")
+        # If you've made it to this point, the raw data file didn't have dQ or current
+        # There's not much you can do without this data
+        print("Lacking necessary columns to determine current and capacity.")
+        return None
+    
+    df['state'] = df['Current'].map(lambda x: state_from_current(x))
+    
     return df
 
-def bt_export_processing(df):
+def bt_export_processing(raw):
     """
-    Process the given DataFrame to correct units and calculate capacity and cycle changes. Works for dataframes from the BT-Export .csv files.
+    Process the given DataFrame to generate a standardized output DataFrame. 
+    Works for dataframes from the BT-Export .csv files.
 
     Args:
-        df (pandas.DataFrame): The input DataFrame containing the data.
+        raw (pandas.DataFrame): The input DataFrame containing the raw data.
 
     Returns:
-        pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
+        pandas.DataFrame: The processed DataFrame with standardized columns: Time, dt, Voltage, Current, dQ, and state
+        (See echem_file_loader for definitions and units of these columns)
     """
+    df = pd.DataFrame()
+    df['Time'] = raw['Time / s']
+    df['dt'] = np.diff(df['Time'], prepend=0)
 
     # Convert units in the current columns
-    if('I / A' in df.columns) and ('U / V' in df.columns):
-        df['Current'] = df['I / A']*1000 # Convert into mA
-        df.rename(columns = {'U / V':'Voltage'}, inplace = True)
-        df['dV'] = np.diff(df['Voltage'], prepend=df['Voltage'][0])
+    if('I / A' in raw.columns) and ('U / V' in raw.columns):
+        df['Current'] = raw['I / A']*1000 # Convert into mA
+        df['Voltage'] = raw['U / V']
         df['state'] = df['Current'].map(lambda x: state_from_current(x))
     else:
         print("Lacking necessary columns to determine state.")
+        return None
 
-    df['cycle change'] = False
-    if 'state' in df.columns:
-        not_rest_idx = df[df['state'] != 0].index
-        df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
-    df['half cycle'] = (df['cycle change'] == True).cumsum()
-
-    # It's preferable to use dQ or dq to avoid some issues from EC-lab resetting
-    # the capacity values within a half cycle
-    if 'Q / C' in df.columns:
-        df['dQ'] = np.diff(df['Q / C'], prepend=0)/3.6 # Calculate dQ and convert units from C to mAh
-        df['|dQ|'] = abs(df['dQ'])
-        for cycle in df['half cycle'].unique():
-            mask = df['half cycle'] == cycle
-            cycle_idx = df.index[mask]
-            df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, '|dQ|'].cumsum()
+    if 'Q / C' in raw.columns:
+        df['dQ'] = np.diff(raw['Q / C'], prepend=0)
     else:
-        print("Warning: unhandled column layout. No capacity column found.")
+        df['dQ'] = df['Current']*df['dt']
+
     return df
 
 def ivium_processing(df):
@@ -415,10 +408,10 @@ def ivium_processing(df):
     df['Time'] = df['time /s']
     return df
 
-def new_land_processing(df):
+def new_landt_processing(df):
     """
-    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the Landdt .xlsx files.
-    Landdt has many different ways of exporting the data - so this is for one specific way of exporting the data.
+    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the Landt .xlsx files.
+    Landt has many different ways of exporting the data - so this is for one specific way of exporting the data.
 
     Args:
         df (pandas.DataFrame): The input DataFrame containing the data.
@@ -443,10 +436,10 @@ def new_land_processing(df):
     df['Time'] = df['time /s']
     return df
 
-def old_land_processing(df):
+def old_landt_processing(df):
     """
-    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the Landdt .xlsx files.
-    Landdt has many different ways of exporting the data - so this is for one specific way of exporting the data.
+    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the Landt .xlsx files.
+    Landt has many different ways of exporting the data - so this is for one specific way of exporting the data.
 
     Args:
         df (pandas.DataFrame): The input DataFrame containing the data.
