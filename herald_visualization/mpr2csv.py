@@ -32,6 +32,9 @@ def id_to_path(cellid, root_dir=data_path):
     """
     glob_str = os.path.join('**', '*'+cellid+'*/')
     paths = glob.glob(glob_str, root_dir=root_dir, recursive=True)
+    # Ignore all directories containing skip.txt
+    paths = [p for p in paths if not os.path.isfile(os.path.join(root_dir, p, 'skip.txt'))]
+
     if len(paths) == 1:
         return os.path.join(root_dir, paths[0])
     elif len(paths) == 0:
