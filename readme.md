@@ -36,7 +36,11 @@ The contents of the file are as follows:
     cd "$cache"
 
     echo "Starting sync: $(date)"
-    rclone copy . "$dest" -v --dropbox-batch-mode sync --transfers 8 # Uses rclone to copy the cache folder into the Dropbox directory
+    rclone copy . "$dest" -uv --dropbox-batch-mode sync --transfers 8 # Uses rclone to copy the cache folder into the Dropbox directory
+    sleep 3 # Keeps terminal open for quick check of output
+
+    errorcount=$(grep "ERROR" $origin/sync_data.log | wc -l)
+    echo "Finished with $errorcount error(s)"    
 
 A few variables will need to be set to tell the scripts where data is located and where Dropbox is. Using UNIX-style paths starting at the `/cygdrive` mount point*, set the value of `origin` to the path in which the test data is being stored locally (do not include the curly braces shown above, but do use quotes around the path). Set the value of `cache` to a new folder that you create (recommendation below). Set the value of `dest` to the path where the test data will be backed up, e.g. the Dropbox, as specified by the rclone setup. This should look something like:
     

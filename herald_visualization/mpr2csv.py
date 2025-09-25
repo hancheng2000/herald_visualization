@@ -269,7 +269,8 @@ def total_AM_mass(cell_props):
 # convert all relevant data to .csv
 def cycle_mpr2csv(
         dir_name,
-        listfile='stitch.txt'
+        listfile='stitch.txt',
+        export_csv=True
     ):
     df = pd.DataFrame()
     home_dir = os.getcwd()
@@ -312,39 +313,36 @@ def cycle_mpr2csv(
         mass = cell_props['active_material_mass']
     else:
         mass = 0 # Will be ignored by df_post_process
-    
     if all(key in cell_props for key in ['interc_weight', 'x_at_mass', 'empty_mol_weight', 'e_per_ion', 'active_material_mass']):
         # All of the above keys are required to calculate full_mass
         full_mass = total_AM_mass(cell_props)
     else:
         full_mass = 0
-
     if 'surface_area' in cell_props:
         area = cell_props['surface_area']
     else:
         area = 0
-
     df = ec.df_post_process(df, 
                             mass=mass,
                             full_mass=full_mass, 
                             area=area)
 
-    # Export navani-processed dataframe as a .csv for later use
-    # Path for .csv with same filename as .mps or .json
-    os.makedirs('outputs', exist_ok=True)
-    settings_extension = os.path.splitext(settings_filename)[-1].lower()
-    output_filename = settings_filename.removesuffix(settings_extension) + '.csv'
-    data_csv_filename = os.path.join('outputs', output_filename)
-    df.to_csv(data_csv_filename)
-    print(f"CSV exported to: {data_csv_filename}")
+    if export_csv:
+        # Export navani-processed dataframe as a .csv for later use
+        # Path for .csv with same filename as .mps or .json
+        os.makedirs('outputs', exist_ok=True)
+        settings_extension = os.path.splitext(settings_filename)[-1].lower()
+        output_filename = settings_filename.removesuffix(settings_extension) + '.csv'
+        data_csv_filename = os.path.join('outputs', output_filename)
+        df.to_csv(data_csv_filename)
+        print(f"CSV exported to: {data_csv_filename}")
 
-    # Export a cycle summary .csv if multiple half cycles are present
-    # TODO: catch error when properties are not present
-    if df['half cycle'].max() >= 1:
-        cycle_summary = ec.cycle_summary(df, mass=mass, full_mass=full_mass, area=area)
-        cycle_summary_csv_filename = os.path.join('outputs', 'cycle_summary.csv')
-        cycle_summary.to_csv(cycle_summary_csv_filename)
-        # print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
+        # Export a cycle summary .csv if multiple half cycles are present
+        if df['half cycle'].max() >= 1:
+            cycle_summary = ec.cycle_summary(df, mass=mass, full_mass=full_mass, area=area)
+            cycle_summary_csv_filename = os.path.join('outputs', 'cycle_summary.csv')
+            cycle_summary.to_csv(cycle_summary_csv_filename)
+            # print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
     
     os.chdir(home_dir)
     return df

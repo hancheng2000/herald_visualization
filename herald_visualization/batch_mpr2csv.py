@@ -1,10 +1,21 @@
-import os, glob, sys
+import os, glob, sys, argparse
 from herald_visualization.mpr2csv import cycle_mpr2csv
 
-if len(sys.argv) > 1 and sys.argv[1] == '-a': # -a can be entered as a switch following the script name when executing
-    process_all_files = True # Analyze every file located
-else:
-    process_all_files = False # Only analyze fresh data
+# Argument parsing
+parser = argparse.ArgumentParser()
+# TODO: implement o, s
+parser.add_argument('-a', '--all', help="Analyze even if no new data is found since last analysis.", action='store_true')
+parser.add_argument('-d', '--dry-run', help="Do not export csv after analysis. (Not implemented)", action='store_false')
+parser.add_argument('-o', '--opt-timeout', help="Wait x sec for user response at prompts. Set to -1 to wait indefinitely. Default 10. (Not implemented)", default=10.0, type=float)
+parser.add_argument('-r', '--recent', help="Only analyze tests with new data from the past x days.", type=float)
+parser.add_argument('-s', '--warn-size', help="Warn and wait for input if data filesize exceeds this value (bytes). Default 200MB. (Not implemented)", default=200_000_000, type=int)
+args = parser.parse_args()
+export_csv = args.dry_run # Set flag for exporting csv (False if -d arg is given)
+if args.recent:
+    import time
+    # Determine the earliest Unix timestamp within the previous args.recent days
+    earliest_time = time.time() - (args.recent*86400)
+
 base_path = os.getcwd()
 
 # Check for a file defining the path to the local system's data directory
@@ -37,9 +48,12 @@ for path in glob_list:
         data_files = glob.glob(os.path.join(full_path, '*.mpr')) + glob.glob(os.path.join(full_path, '*.csv'))
         # Looks for both .mpr files from EC-Lab and .csv files from BT-Export
         latest_data_time = max([os.path.getmtime(file) for file in data_files])
-        if latest_data_time > processed_time or process_all_files:
-            cycle_mpr2csv(full_path)
-            run_count += 1
+        # Only look at data newer than the exported files, unless --all is set
+        if latest_data_time > processed_time or args.all:
+            # If --recent is set, only consider tests with data newer than requested, otherwise all tests from above
+            if not args.recent or latest_data_time > earliest_time:
+                cycle_mpr2csv(full_path, export_csv=export_csv)
+                run_count += 1
     except:
         # Return to the base path if there's an error, otherwise we're left stranded in a random dir
         os.chdir(base_path)
