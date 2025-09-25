@@ -3,12 +3,11 @@ from herald_visualization.mpr2csv import cycle_mpr2csv
 
 # Argument parsing
 parser = argparse.ArgumentParser()
-# TODO: implement o, s
 parser.add_argument('-a', '--all', help="Analyze even if no new data is found since last analysis.", action='store_true')
-parser.add_argument('-d', '--dry-run', help="Do not export csv after analysis. (Not implemented)", action='store_false')
+parser.add_argument('-d', '--dry-run', help="Do not export csv after analysis.", action='store_false')
 parser.add_argument('-o', '--opt-timeout', help="Wait x sec for user response at prompts. Set to -1 to wait indefinitely. Default 10. (Not implemented)", default=10.0, type=float)
 parser.add_argument('-r', '--recent', help="Only analyze tests with new data from the past x days.", type=float)
-parser.add_argument('-s', '--warn-size', help="Warn and wait for input if data filesize exceeds this value (bytes). Default 200MB. (Not implemented)", default=200_000_000, type=int)
+parser.add_argument('-s', '--warn-size', help="Warn and wait for input if data filesize exceeds this value (MB). (Not implemented)", type=float)
 args = parser.parse_args()
 export_csv = args.dry_run # Set flag for exporting csv (False if -d arg is given)
 if args.recent:
@@ -47,6 +46,9 @@ for path in glob_list:
             processed_time = 0 # Makes program consider the (nonexistent) summary file as outdated
         data_files = glob.glob(os.path.join(full_path, '*.mpr')) + glob.glob(os.path.join(full_path, '*.csv'))
         # Looks for both .mpr files from EC-Lab and .csv files from BT-Export
+        if args.warn_size: # If flag is set to warn above a certain file size
+            total_data_size = sum([os.path.getsize(file) for file in data_files])/(1024**2) # Calculate total size of data files in MB
+            # TODO: implement warning size
         latest_data_time = max([os.path.getmtime(file) for file in data_files])
         # Only look at data newer than the exported files, unless --all is set
         if latest_data_time > processed_time or args.all:

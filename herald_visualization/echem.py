@@ -384,7 +384,7 @@ def bt_export_processing(raw):
         return None
 
     if 'Q / C' in raw.columns:
-        df['dQ'] = np.diff(raw['Q / C'], prepend=0)
+        df['dQ'] = np.diff(raw['Q / C']/3.6, prepend=0) # Convert from C to mAh
     else:
         df['dQ'] = df['Current']*df['dt']
 

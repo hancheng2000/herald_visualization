@@ -171,7 +171,8 @@ def import_settings(settings_filename):
     # Val: string in the associated line of the settings file
     # Handles both .mps files from EC-Lab and .json files from BT-Export
     file_extension = os.path.splitext(settings_filename)[-1].lower()
-    val_regex = r'\d+\.?\d*' # Regex for numeric values
+    val_regex = r'(?<![a-zA-Z])\d+\.?\d*' # Regex for numeric values that aren't immediately preceded by letters
+    # This is necessary to match x.xxx values, x values, and ignore the 2 in cm2
     cell_props = {}
 
     try:
@@ -301,14 +302,13 @@ def cycle_mpr2csv(
         print("No cell properties imported.")
         cell_props = {}
     elif not dict_vals_agree(cell_props_dicts):
-        print("Cell properties are inconsistent between settings files.")
+        print(f"Cell properties are inconsistent between settings files: {cell_props_dicts}.")
         cell_props = {}
     else:
         # If all settings files are consistent, use the first to get properties
         cell_props = import_settings(settings_filename)
 
     # Post-process
-    # print(f"Cell properties: {cell_props}")
     if 'active_material_mass' in cell_props:
         mass = cell_props['active_material_mass']
     else:
