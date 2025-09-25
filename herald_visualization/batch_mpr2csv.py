@@ -43,5 +43,5 @@ for path in glob_list:
     except:
         # Return to the base path if there's an error, otherwise we're left stranded in a random dir
         os.chdir(base_path)
-print(f"Located {len(glob_list)} data paths.")
-print(f"Ran mpr2csv in {run_count} data paths.")
+print(f"\nLocated {len(glob_list)} data paths.")
+print(f"Ran cycle_mpr2csv in {run_count} data paths.")

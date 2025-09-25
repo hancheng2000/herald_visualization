@@ -29,6 +29,7 @@ else:
 def id_to_path(cellid, root_dir=data_path):
     """
     Find the correct directory path to a data folder from the cell ID
+    Searching skips any directory containing a file called skip.txt
     """
     glob_str = os.path.join('**', '*'+cellid+'*/')
     paths = glob.glob(glob_str, root_dir=root_dir, recursive=True)
@@ -187,9 +188,7 @@ def import_settings(settings_filename):
 
             with open(settings_filename, 'r', errors='ignore') as file:
                 # Iterate through settings file to fill in active material mass and other cell parameters
-                i = 0
                 while True:
-                    i += 1
                     line = file.readline()
                     if not line:
                         break
@@ -198,7 +197,8 @@ def import_settings(settings_filename):
                         if new_key:
                             match = re.findall(val_regex, line)
                             # The final matching string is used
-                            cell_props[new_key[0]] = float(match[-1])         
+                            if match:
+                                cell_props[new_key[0]] = float(match[-1])         
                 return cell_props
         elif file_extension == '.json':
             settings_keys = {
@@ -214,12 +214,35 @@ def import_settings(settings_filename):
                 settings = json.load(file)
                 for key, val in settings_keys.items():
                     match = re.findall(val_regex, settings['dutType'][val])
-                    cell_props[key] = float(match[-1])
+                    if match:
+                        cell_props[key] = float(match[-1])
                 return cell_props
 
     except:
         print("Unable to read settings file.")
-        
+
+def dict_vals_agree(dicts, tolerance=0.02):
+    """
+    Check that all dicts within a list have equal values for shared keys
+    within a specified tolerance.
+    """
+    if len(dicts) <= 1:
+        return True # Trivially true if there are 0 or 1 dicts
+    
+    # Find keys that appear in at least 2 dicts
+    shared_keys = set.intersection(*(set(d.keys()) for d in dicts))
+
+    for key in shared_keys:
+        # Compare all values to the first dict's value
+        # If any exceed the tolerance, then dicts are not in agreement
+        values = [d[key] for d in dicts if key in d]
+        ref = values[0]
+        for v in values[1:]:
+            if abs(v - ref) > tolerance:
+                return False
+    
+    return True
+
 def total_AM_mass(cell_props):
     """
     Uses cell properties imported from a settings file to convert the cathode AM mass
@@ -269,26 +292,42 @@ def cycle_mpr2csv(
 
     # Check that all test files came from the same settings file, i.e. test
     settings_filenames = [settings_filename_from_data_filename(filename) for filename in data_filenames]
-    if len(set(settings_filenames)) > 1:
-        print("Auto-search found files from multiple tests. The first test's settings file is being used. A listfile may be needed if not already present.")
-    # Assume that the cell characteristics are the same in all settings files,
-    # only look at settings file associated with first data file
-    settings_filename = settings_filenames[0]
-    cell_props = import_settings(settings_filename)
-    print(f"Settings file: {settings_filename}")
+    settings_filename = settings_filenames[0] # First settings file will be used if they are all consistent
+    print(f"Settings file(s): {settings_filenames}")
+    cell_props_dicts = [import_settings(f) for f in settings_filenames]
+    if (not cell_props_dicts) or all(not d for d in cell_props_dicts):
+        # If no properties were found
+        print("No cell properties imported.")
+        cell_props = {}
+    elif not dict_vals_agree(cell_props_dicts):
+        print("Cell properties are inconsistent between settings files.")
+        cell_props = {}
+    else:
+        # If all settings files are consistent, use the first to get properties
+        cell_props = import_settings(settings_filename)
 
     # Post-process
-    if cell_props:
-        print(f"Cell properties: {cell_props}")
+    # print(f"Cell properties: {cell_props}")
+    if 'active_material_mass' in cell_props:
         mass = cell_props['active_material_mass']
-        full_mass = total_AM_mass(cell_props)
-        area = cell_props['surface_area']
-        df = ec.df_post_process(df, 
-                                mass=mass,
-                                full_mass=full_mass, 
-                                area=area)
     else:
-        print(f"No cell properties imported.")
+        mass = 0 # Will be ignored by df_post_process
+    
+    if all(key in cell_props for key in ['interc_weight', 'x_at_mass', 'empty_mol_weight', 'e_per_ion', 'active_material_mass']):
+        # All of the above keys are required to calculate full_mass
+        full_mass = total_AM_mass(cell_props)
+    else:
+        full_mass = 0
+
+    if 'surface_area' in cell_props:
+        area = cell_props['surface_area']
+    else:
+        area = 0
+
+    df = ec.df_post_process(df, 
+                            mass=mass,
+                            full_mass=full_mass, 
+                            area=area)
 
     # Export navani-processed dataframe as a .csv for later use
     # Path for .csv with same filename as .mps or .json
