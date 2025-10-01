@@ -8,6 +8,8 @@ import os
 import herald_visualization.echem as ec
 import json
 
+# TODO: implement proper logging
+
 # Functions
 
 # Check for a file defining the path to the local system's data directory
@@ -34,6 +36,7 @@ def id_to_path(cellid, root_dir=data_path):
     glob_str = os.path.join('**', '*'+cellid+'*/')
     paths = glob.glob(glob_str, root_dir=root_dir, recursive=True)
     # Ignore all directories containing skip.txt
+    # This makes it easier to deal with duplicate IDs, e.g. when a cell is run on multiple cyclers
     paths = [p for p in paths if not os.path.isfile(os.path.join(root_dir, p, 'skip.txt'))]
 
     if len(paths) == 1:

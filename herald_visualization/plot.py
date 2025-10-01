@@ -1,5 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
 from matplotlib.lines import Line2D
 import os, glob, re
 import numpy as np
@@ -242,7 +243,7 @@ def plot_cycling(
         dfs,
         cycles='all',
         labels=None,
-        colormap=None,
+        colormap='Blues',
         capacity_col='Specific Capacity Total AM',
         voltage_col='Voltage',
         fig=None,
@@ -264,6 +265,8 @@ def plot_cycling(
     """
 
     # TODO add functionality to select specific half cycles
+    # TODO add functionality to turn on/off OCV plotting
+    # TODO switch to continuous colormap support
 
     if fig == None and ax == None:
         fig, ax = plt.subplots(**subplots_kwargs)
@@ -292,7 +295,7 @@ def plot_cycling(
             cycles = df['full cycle'].unique()
         else:
             cycles = list(cycles) # Ensure that cycles is a list, even if an int is passed
-        cm = colormap_picker(len(cycles))
+        cm = plt.get_cmap(colormap)
         custom_lines = [Line2D([0], [0], color=cm(i), lw=2) for i, _ in enumerate(cycles)]
         if not labels: # Automatically set labels based on cycle numbers if none are provided
             labels = [f'Cycle {n}' for n in cycles]
@@ -386,9 +389,6 @@ def plot_dqdv(
         ax: The matplotlib axes object.
 
     """
-    import matplotlib.cm as cm
-    from matplotlib.colors import Normalize
-
     if fig == None and ax == None:
         fig, ax = plt.subplots(**subplots_kwargs)
     def colormap_picker(number_of_plots):
@@ -495,9 +495,6 @@ def plot_dqdv(
     return fig, ax
 
 
-import plotly.graph_objects as go
-import plotly.express as px
-
 def plot_cycling_plotly(dfs, cycles='all', labels=None, colormap=None,
                         capacity_col='Specific Capacity Total AM',
                         voltage_col='Voltage', halfcycles_from_cycle=None):
@@ -517,6 +514,9 @@ def plot_cycling_plotly(dfs, cycles='all', labels=None, colormap=None,
     Returns:
       fig: A Plotly Figure with an update menu to select cycles.
     """
+    import plotly.graph_objects as go
+    import plotly.express as px
+
     # Use the DataFrame from the dict if needed
     if isinstance(dfs, dict):
         df = list(dfs.values())[0]

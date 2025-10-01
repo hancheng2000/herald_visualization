@@ -5,7 +5,7 @@ from herald_visualization.mpr2csv import cycle_mpr2csv
 parser = argparse.ArgumentParser()
 parser.add_argument('-a', '--all', help="Analyze even if no new data is found since last analysis.", action='store_true')
 parser.add_argument('-d', '--dry-run', help="Do not export csv after analysis.", action='store_false')
-parser.add_argument('-o', '--opt-timeout', help="Wait x sec for user response at prompts. Set to -1 to wait indefinitely. Default 10. (Not implemented)", default=10.0, type=float)
+# parser.add_argument('-o', '--opt-timeout', help="Wait x sec for user response at prompts. Set to -1 to wait indefinitely. Default 10. (Not implemented)", default=10.0, type=float)
 parser.add_argument('-r', '--recent', help="Only analyze tests with new data from the past x days.", type=float)
 parser.add_argument('-s', '--warn-size', help="Warn and wait for input if data filesize exceeds this value (MB). (Not implemented)", type=float)
 args = parser.parse_args()
@@ -46,18 +46,26 @@ for path in glob_list:
             processed_time = 0 # Makes program consider the (nonexistent) summary file as outdated
         data_files = glob.glob(os.path.join(full_path, '*.mpr')) + glob.glob(os.path.join(full_path, '*.csv'))
         # Looks for both .mpr files from EC-Lab and .csv files from BT-Export
-        if args.warn_size: # If flag is set to warn above a certain file size
-            total_data_size = sum([os.path.getsize(file) for file in data_files])/(1024**2) # Calculate total size of data files in MB
-            # TODO: implement warning size
+        
         latest_data_time = max([os.path.getmtime(file) for file in data_files])
         # Only look at data newer than the exported files, unless --all is set
-        if latest_data_time > processed_time or args.all:
-            # If --recent is set, only consider tests with data newer than requested, otherwise all tests from above
-            if not args.recent or latest_data_time > earliest_time:
-                cycle_mpr2csv(full_path, export_csv=export_csv)
-                run_count += 1
+        if not args.all and latest_data_time < processed_time:
+            raise ValueError('Data too old')
+        # If --recent is set, only consider tests with data newer than requested, otherwise all tests from above
+        if args.recent and latest_data_time < earliest_time:
+            raise ValueError('Data too old')  
+        if args.warn_size: # If flag is set to warn above a certain file size
+            total_data_size = sum([os.path.getsize(file) for file in data_files])/(1024**2) # Calculate total size of data files in MB
+            if total_data_size > args.warn_size:
+                inp = input(f"File size in {path} ({total_data_size} MB) exceeds {args.warn_size} MB. Press 'y' to analyze anyway, any other key to abort.")
+                if inp.lower() != 'y':
+                    raise ValueError('File size too large')
     except:
         # Return to the base path if there's an error, otherwise we're left stranded in a random dir
         os.chdir(base_path)
+    else:
+        # If no exceptions were raised, run mpr2csv
+        cycle_mpr2csv(full_path, export_csv=export_csv)
+        run_count += 1
 print(f"\nLocated {len(glob_list)} data paths.")
 print(f"Ran cycle_mpr2csv in {run_count} data paths.")
