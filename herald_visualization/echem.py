@@ -10,27 +10,7 @@ import matplotlib.pyplot as plt
 from typing import Union
 from pathlib import Path
 
-# Different cyclers name their columns slightly differently 
-# These dictionaries are guides for the main things you want to plot and what they are called
-res_col_dict = {'Voltage': 'Voltage',
-                'Capacity': 'Capacity'}
-
-mpr_col_dict = {'Voltage': 'Ewe/V',
-                'Capacity': 'Capacity'}
-
-# Deciding on charge, discharge, and rest based on sign of current
-def state_from_current(x):
-    if x > 0:
-        return 1
-    elif x < 0:
-        return -1
-    elif x == 0:
-        return 0
-    else:
-        # print(x)
-        # raise ValueError('Unexpected value in current - not a number')
-        return 0
-
+# MAIN FUNCTION
 # TODO: correct output for non-BioLogic files
 def echem_file_loader(filepath, 
                       df_to_append_to=None, 
@@ -186,105 +166,163 @@ def echem_file_loader(filepath,
         return df
 
     # Sort by time before calculating cycle numbers, etc.
+    # In case multiple points have the same time value, sort by id
     df.sort_values(by=['Time','id'], inplace=True)
 
-    df = calculate_cycle_numbers(df)
-    total_run_count = 0
-    run_count = debounce # If debounce is True, run_count > 0 so that the while loop executes. If False, debounce is skipped.
-    while run_count > 0:
-        df, run_count = debouncer(df) # If debouncer does not change anything, this loop exits
-        # Otherwise, it will run recursively until no more extraneous half cycles are found
-        total_run_count += run_count # Keep track of total runs to alert user
-        df = calculate_cycle_numbers(df, lock_cycle_change=True) # Recalculate cycle numbers, but leave 'cycle change' alone
-    if total_run_count > 0:
-        print(f'Debouncer ran {total_run_count} times.')
-
-    # Calculate Q (running total capacity) and Capacity (capacity, reset each half cycle)
+    # Calculate Q (running total capacity) to use as a check for half cycle alternation
     df['Q'] = df['dQ'].cumsum()
-    for cycle in df['half cycle'].unique():
-        mask = (df['half cycle'] == cycle)
-        cycle_idx = df.loc[mask].index
-        df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, 'dQ'].abs().cumsum()
+
+    # Calculate cycle numbers
+    rest_mask = (df['state'] == 0)
+    df['cycle change'] = False
+    df['rest count'] = rest_mask.cumsum() # Helper column
+    df['cycle change candidate'] = False # Helper column
+    if (~rest_mask).any(): # If there is non-rest data
+        # When state changes from 1 to -1 or -1 to 1, it is a candidate for a cycle change
+        # But could also be caused by current transients
+        # There should be rest between each charge and discharge half cycle, so check for an increment in number of rest points
+        df.loc[~rest_mask, 'cycle change candidate'] = df.loc[~rest_mask, 'state'].ne(df.loc[~rest_mask, 'state'].shift())
+        df.loc[df['cycle change candidate'], 'cycle change'] = df.loc[df['cycle change candidate'], 'rest count'].ne(df.loc[df['cycle change candidate'], 'rest count'].shift())
+        df.drop(columns=['rest count', 'cycle change candidate'], inplace=True) # Clean up helper columns
+    else:
+        # If nothing is found for not_rest_idx, then all points are at rest
+        # Therefore all the following values can be set to 0
+        df['half cycle'] = 0
+        df['full cycle'] = 0
+        df['Q'] = 0
+        df['Capacity'] = 0
+        df['Power'] = 0
+        print("No charge or discharge data found.")
+        return df
+    df['half cycle'] = (df['cycle change'] == True).cumsum() # Each time a cycle change occurs, increment half cycle
+    # For each cycle, determine the state from change in Q
+    # Most of the time this is the same as 'state' calculated at each point from current, except in the case of transients
+    cycle_state = df.groupby('half cycle')['Q'].agg(lambda x: int(np.sign(x.iloc[-1] - x.iloc[0])))
+    df['cycle state'] = df['half cycle'].map(cycle_state) # Assign a value of cycle state to each point in df
+    # Sanity check: the half cycle 0 should have a change in Q of 0 (only rest)
+    # and each subsequent half cycle should alternate in sign (charge then discharge, etc.)
+    alternation_ok = (cycle_state.values[2:] * cycle_state.values[1:-1] == -1).all() # True if every half cycle starting with 1 alternates cycle state sign
+    if cycle_state[0] != 0:
+        print("Unexpected state in half cycle 0.")
+        return df
+    if not alternation_ok:
+        print("Invalid half cycle definitions.")
+        return df
+    # Adding a full cycle column
+    # 1 full cycle is charge then discharge; code considers which the test begins with
+    if cycle_state[1] == -1: # Cell starts in discharge
+        df['full cycle'] = (df['half cycle']/2).apply(np.floor).astype(int)
+    elif cycle_state[1] == 1: # Cell starts in charge
+        df['full cycle'] = (df['half cycle']/2).apply(np.ceil).astype(int)
+    else:
+        print("Unexpected state in half cycle 1.")
+        return df
+
+    # Calculate Capacity (reset each half cycle)
+    df["Capacity"] = df.groupby('half cycle', group_keys=False).apply(
+        lambda g: (g['dQ'] * g['cycle state']).cumsum()
+    ) # Uses cycle state instead of abs to deal with current transients
 
     # Add a column for power
     df['Power'] = df['Current']*df['Voltage']
 
     return df
 
-# def standardize_time_label(df):
-#     # Makes it easier to concatenate tests of different types.
-#     time_labels = ['time/s', 'time /s', 'Time / s']
-#     for label in time_labels:
-#         if label in df.columns:
-#             df.rename(columns={label: 'Time'}, inplace=True)
-#             break # Only rename the first match
-#     if 'Time' in df.columns:
-#         df['dt'] = np.diff(df['Time'], prepend=0)
-#     return df
+
+# HELPER FUNCTIONS
+# Deciding on charge, discharge, and rest based on sign of current
+def state_from_current(x):
+    try:
+        if np.isnan(x):
+            return 0 # Prevent issues with NaN current
+        else:
+            return int(np.sign(x)) # 1 if current is positive (charge), 0 if 0, -1 if negative (discharge)
+    except:
+        print(f"Unexpected value in current: {x}")
+        raise ValueError('Unexpected value in current')
 
 
-def calculate_cycle_numbers(df,
-                            lock_cycle_change=False):
+def halfcycles_from_cycle(df, cycle):
+    # Determines which half cycles correspond to a given full cycle.
+    # Relies on the fact that charge always precedes discharge in a given cycle.
+    # Returns half cycle number of charge and discharge as a tuple
+    try:
+        mask = ((df['full cycle'] == cycle) & (df['half cycle'] > 0)) # Ignore half cycle 0, which is the initial rest
+        hc = df.loc[mask]['half cycle'].unique()
+        if len(hc) == 2:
+            # If both a charge and discharge half cycle are present, charge comes first
+            cha_hc = min(hc)
+            dis_hc = max(hc)
+        elif len(hc) == 1 and cycle == 0:
+            # In this case, the test starts with discharge and cycle 0 is being requested
+            # Therefore there is no charge half cycle
+            cha_hc = None
+            dis_hc = hc[0]
+        elif len(hc) == 1:
+            # If only one half cycle is found and it's not cycle 0
+            # then only the charge portion of the cycle is present
+            cha_hc = hc[0]
+            dis_hc = None
+        else:
+            print(f"Invalid number of half cycles detected in cycle {cycle}.")
+            return None, None
+    except TypeError:
+        print(f"Invalid cycle number: {cycle}.")
+        return None, None
+    return cha_hc, dis_hc
+
+
+def cycle_from_halfcycle(df, halfcycle):
+    # Function for determining which cycle corresponds to a given half cycle.
+    try:
+        mask = (df['half cycle'] == halfcycle)
+        return df.loc[mask]['full cycle'].iloc[0]
+    except TypeError:
+        print(f"Invalid halfcycle number: {halfcycle}.")
+        return None
+
+
+def calculate_cycle_numbers(df):
     """
     Determine when a test is switching between charge and discharge, then calculate half cycle and full cycle numbers for each point in the df.
-    - lock_cycle_change: Do not change the values in 'cycle change', only the half cycle and full cycle numbers. This prevents undoing the work of debouncer.
     """
-    not_rest_idx = df[df['state'] != 0].index
-    if not lock_cycle_change or 'cycle change' not in df.columns: # If lock_cycle_change is not set or if cycle change has not been calculated yet (to catch a premature use of lock_cycle_change)
-        df['cycle change'] = False
-        if len(not_rest_idx) > 0:
-            df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
-        else:
-            # If nothing is found for not_rest_idx, then all points are at rest
-            # Therefore all the following values can be set to 0
-            df['cycle change'] = 0
-            df['half cycle'] = 0
-            df['full cycle'] = 0
-            df['Q'] = 0
-            df['Capacity'] = 0
-            df['Power'] = 0
-            print("No charge or discharge data found.")
-            return df
+    rest_mask = (df['state'] == 0)
+    df['cycle change'] = False
+    df['rest count'] = rest_mask.cumsum() # Helper column
+    df['cycle change candidate'] = False # Helper column
+    if (~rest_mask).any(): # If there is non-rest data
+        # When state changes from 1 to -1 or -1 to 1, it is a candidate for a cycle change
+        # But could also be caused by current transients
+        # There should be rest between each charge and discharge half cycle, so check for an increment in number of rest points
+        df.loc[~rest_mask, 'cycle change candidate'] = df.loc[~rest_mask, 'state'].ne(df.loc[~rest_mask, 'state'].shift())
+        df.loc[df['cycle change candidate'], 'cycle change'] = df.loc[df['cycle change candidate'], 'rest count'].ne(df.loc[df['cycle change candidate'], 'rest count'].shift())
+        df.drop(columns=['rest count', 'cycle change candidate'], inplace=True) # Clean up helper columns
+    else:
+        # If nothing is found for not_rest_idx, then all points are at rest
+        # Therefore all the following values can be set to 0
+        df['half cycle'] = 0
+        df['full cycle'] = 0
+        df['Q'] = 0
+        df['Capacity'] = 0
+        df['Power'] = 0
+        print("No charge or discharge data found.")
+        return df
 
     df['half cycle'] = (df['cycle change'] == True).cumsum() # Each time a cycle change occurs, increment half cycle
     # Adding a full cycle column
     # 1 full cycle is charge then discharge; code considers which the test begins with
-    # Find the first state that is not rest
-    initial_state = df.loc[not_rest_idx, 'state'].iloc[0]
+    first_halfcycle = df.loc[df['half cycle'] == 1]
+    initial_state = np.sign(first_halfcycle['dQ'].cumsum().iloc[-1] - first_halfcycle['dQ'].cumsum().iloc[0]) # Difference in Q between last and first point is charge passed
+    # If charge passed is > 0, then test starts in charge, vice versa
+    # Has to do the cumsum because Q has not been generated yet when calculate_cycle_numbers is called
     if initial_state == -1: # Cell starts in discharge
-        df['full cycle'] = (df['half cycle']/2).apply(np.floor)
+        df['full cycle'] = (df['half cycle']/2).apply(np.floor).astype(int)
     elif initial_state == 1: # Cell starts in charge
-        df['full cycle'] = (df['half cycle']/2).apply(np.ceil)
+        df['full cycle'] = (df['half cycle']/2).apply(np.ceil).astype(int)
     else:
         print("Unexpected state in the first data point of half cycle 1.")
         return None
     return df
-
-
-def debouncer(df,
-             time_threshold=0.1,
-             current_threshold=0.010,
-             voltage_threshold=0.5):
-    """
-    Remove extraneous half cycles caused by 'bouncing' in the voltage trace and subsequent potentiostat oscillations. Uses 3 checks to reduce likelihood of false positives:
-    - Time changes by less than time_threshold
-    - Maximum absolute current less than current_threshold
-    - Range from minimum to maximum voltage less than voltage_threshold
-    If 2 or more of these conditions are true, that half cycle is regarded as extraneous and removed.
-    """
-    run_count = 0
-    for cycle in df['half cycle'].unique():
-        if cycle > 0: # Ignore half cycle 0, which is initial rest
-            mask = (df['half cycle'] == cycle)
-            time_delta = df.loc[mask]['Time'].max() - df.loc[mask]['Time'].min()
-            max_current = df.loc[mask]['Current'].abs().max()
-            voltage_delta = df.loc[mask]['Voltage'].max() - df.loc[mask]['Voltage'].min()
-            conditions_met = sum([(time_delta < time_threshold), (max_current < current_threshold), (voltage_delta < voltage_threshold)])
-            if conditions_met >= 2: # If at least 2 conditions are true
-                first_idx = df.loc[mask].index.min() # Find the first data point in the half cycle
-                df.at[first_idx, 'cycle change'] = False # Turn off 'cycle change' so that half cycle will not be incremented next time it is calculated
-                run_count += 1
-    return df, run_count # Lets caller program know how many half cycles were removed
         
 
 def df_post_process(df, mass=0, full_mass=0, area=0):
@@ -301,26 +339,38 @@ def df_post_process(df, mass=0, full_mass=0, area=0):
         pandas.DataFrame: The processed DataFrame with processed columns.
     """
     # Adding mass- and area-normalized columns if mass and area are provided
-    # Ignore if defaults of 0.001 are present, since they result in absurdly high values
-    if mass > 0.001:
-        df['Specific Capacity'] = 1000*df['Capacity']/mass
-        df['Specific Q'] = 1000*df['Q']/mass
-        df['Specific Current'] = 1000*df['Current']/mass
-        df['Specific Power'] = 1000*df['Power']/mass
-    if full_mass > 0.001 and mass > 0.001:
-        df['Specific Capacity Total AM'] = 1000*df['Capacity']/full_mass
-        df['Specific Q Total AM'] = 1000*df['Q']/full_mass
-        df['Specific Current Total AM'] = 1000*df['Current']/full_mass
-        df['Specific Power Total AM'] = 1000*df['Power']/full_mass        
-    if area > 0.001:
-        df['Areal Capacity'] = df['Capacity']/area
-        df['Areal Q'] = df['Q']/area
-        df['Areal Current'] = df['Current']/area
-        df['Areal Power'] = df['Power']/area
+    # Ignore if defaults of 0.001 are present, since they result in incorrect and absurdly high values
+    for label in ['Capacity', 'Q', 'Current', 'Power']:
+        if label in df.columns:
+            if mass > 0.001:
+                df['Specific '+label] = 1000*df[label]/mass
+            if full_mass > 0.001 and mass > 0.001:
+                df['Specific '+label+' Total AM'] = 1000*df[label]/full_mass
+            if area > 0.001:
+                df['Areal '+label] = df[label]/area
 
+
+    # # Adding mass- and area-normalized columns if mass and area are provided
+    # # Ignore if defaults of 0.001 are present, since they result in absurdly high values
+    # if mass > 0.001:
+    #     df['Specific Capacity'] = 1000*df['Capacity']/mass
+    #     df['Specific Q'] = 1000*df['Q']/mass
+    #     df['Specific Current'] = 1000*df['Current']/mass
+    #     df['Specific Power'] = 1000*df['Power']/mass
+    # if full_mass > 0.001 and mass > 0.001:
+    #     df['Specific Capacity Total AM'] = 1000*df['Capacity']/full_mass
+    #     df['Specific Q Total AM'] = 1000*df['Q']/full_mass
+    #     df['Specific Current Total AM'] = 1000*df['Current']/full_mass
+    #     df['Specific Power Total AM'] = 1000*df['Power']/full_mass        
+    # if area > 0.001:
+    #     df['Areal Capacity'] = df['Capacity']/area
+    #     df['Areal Q'] = df['Q']/area
+    #     df['Areal Current'] = df['Current']/area
+    #     df['Areal Power'] = df['Power']/area
     return df
 
 
+# IMPORT FUNCTIONS
 def arbin_res(df):
     """
     Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the galvani res2sqlite for Arbin .res files.
@@ -582,6 +632,124 @@ def neware_reader(filename: Union[str, Path]) -> pd.DataFrame:
     df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
     return df
 
+
+# Processing values by cycle number
+def cycle_summary(df, mass=None, full_mass=None, area=None):
+    """
+    Computes summary statistics for each full cycle returning a new dataframe
+    with the following columns:
+    - 'Current': The average current for the cycle
+    - 'UCV': The upper cut-off voltage for the cycle
+    - 'LCV': The lower cut-off voltage for the cycle
+    - 'Discharge Capacity': The maximum discharge capacity for the cycle
+    - 'Charge Capacity': The maximum charge capacity for the cycle
+    - 'CE': The charge efficiency for the cycle (Discharge Capacity/Charge Capacity)
+    - 'Energy Efficiency': The energy efficiency for the cycle (Discharge Energy/Charge Energy)
+    - 'Specific Discharge Capacity': The maximum specific discharge capacity for the cycle
+    - 'Specific Charge Capacity': The maximum specific charge capacity for the cycle
+    - 'Areal Discharge Capacity': The maximum specific discharge capacity for the cycle
+    - 'Areal Charge Capacity': The maximum specific charge capacity for the cycle
+    - 'Average Discharge Voltage': The average discharge voltage for the cycle
+    - 'Average Charge Voltage': The average charge voltage for the cycle
+    - 'Discharge Energy':  The integral energy on discharge for the cycle
+    - 'Charge Energy': The integral energy of charge for the cycle
+    - 'Discharge Overpotential': Overpotential as calculated by the relaxation after discharge
+    - 'Charge Overpotential': Overpotential as calculated by the relaxation after charge
+    
+    Args:
+        df (pandas.DataFrame): The input DataFrame containing the data.
+        mass (float): Mass (in mg) of starting cathode material
+        full_mass (float): Mass (in mg) of fully discharged (e.g. lithiated) cathode
+        area (float): Area (in cm^2) to normalize by for areal values
+
+    Returns:
+        pandas.DataFrame: The summary DataFrame with the calculated values.
+    """
+    not_rest_mask = (df['state'] != 0)
+    # Initialize empty dicts. cha_ and dis_records get added to summary_records which is then turned into the summary_df.
+    cha_records = {}
+    dis_records = {}
+    summary_records = {}
+    for cycle in df['full cycle'].unique():
+        cha_hc, dis_hc = halfcycles_from_cycle(df, cycle)
+        summary_records[cycle] = {} # Initialize empty entry to add keys later
+        if cha_hc: # Skip if not present for this cycle
+            mask = (df['half cycle'] == cha_hc)
+            cha_df = df.loc[mask & not_rest_mask] # For averaged values, we want to exclude data points from rest
+            if (cha_df['Time'].max() != cha_df['Time'].min()): # Check that non-zero time has elapsed in the halfcycle
+                wts = cha_df['dt']
+            else:
+                wts = None # If no time has elapsed, this will unweight the time-based averages later to prevent a DivByZero error
+            cha_cap = df.loc[mask]['Capacity'].max() # Charge capacity
+            cha_energy = np.trapz(df.loc[mask]['Voltage'], df.loc[mask]['Capacity']) # Charge energy
+            cha_current = np.average(cha_df['Current'], weights=wts) # Average charge current
+            cha_power = np.average(cha_df['Power'], weights=wts) # Average charge power
+            cha_voltage = np.average(cha_df['Voltage'], weights=wts) # Average charge voltage
+            cha_UCV = cha_df['Voltage'].max() # Maximum voltage on charge is upper cutoff voltage
+            cha_overpot = cha_UCV - df.loc[mask]['Voltage'].iloc[-1] # Charge overpotential
+            # Subtract final data point (end of rest) from maximum voltage during charge
+
+            cha_records[cycle] = {
+                'Charge Capacity': cha_cap,
+                'Charge Energy': cha_energy,
+                'Average Charge Current': cha_current,
+                'Average Charge Power': cha_power,
+                'Average Charge Voltage': cha_voltage,
+                'UCV': cha_UCV,
+                'Charge Overpotential': cha_overpot
+            }
+            summary_records[cycle] |= cha_records[cycle] # Add entries to summary_records
+        
+        if dis_hc: # Skip if not present for this cycle
+            mask = (df['half cycle'] == dis_hc)
+            dis_df = df.loc[mask & not_rest_mask] # For averaged values, we want to exclude data points from rest
+            if (dis_df['Time'].max() != dis_df['Time'].min()): # Check that non-zero time has elapsed in the halfcycle
+                wts = dis_df['dt']
+            else:
+                wts = None # If no time has elapsed, this will unweight the time-based averages later to prevent a DivByZero error
+            dis_cap = df.loc[mask]['Capacity'].max() # Discharge capacity
+            dis_energy = np.trapz(df.loc[mask]['Voltage'], df.loc[mask]['Capacity']) # Discharge energy
+            dis_current = np.average(dis_df['Current'], weights=wts) # Average discharge current
+            dis_power = np.average(dis_df['Power'], weights=wts) # Average discharge power
+            dis_voltage = np.average(dis_df['Voltage'], weights=wts) # Average discharge voltage
+            dis_LCV = dis_df['Voltage'].min() # Minimum voltage on discharge is lower cutoff voltage
+            dis_overpot =  df.loc[mask]['Voltage'].iloc[-1] - dis_LCV # Discharge overpotential
+            # Subtract minimum voltage during discharge from final rest point
+
+            dis_records[cycle] = {
+                'Discharge Capacity': dis_cap,
+                'Discharge Energy': dis_energy,
+                'Average Discharge Current': dis_current,
+                'Average Discharge Power': dis_power,
+                'Average Discharge Voltage': dis_voltage,
+                'LCV': dis_LCV,
+                'Discharge Overpotential': dis_overpot
+            }
+            summary_records[cycle] |= dis_records[cycle] # Add entries to summary_records
+    summary_df = pd.DataFrame.from_dict(summary_records, orient='index') # Convert the summary_records dict into a df
+    summary_df.index.name = 'cycle'
+    
+    # Adding mass- and area-normalized columns if mass and area are provided
+    # Ignore if defaults of 0.001 are present, since they result in incorrect and absurdly high values
+    for label in ['Discharge Capacity', 'Discharge Energy', 'Average Discharge Current', 'Average Discharge Power', 
+                  'Charge Capacity', 'Charge Energy', 'Average Charge Current', 'Average Charge Power']:
+        if label in summary_df.columns:
+            if mass > 0.001:
+                summary_df['Specific '+label] = 1000*summary_df[label]/mass
+            if full_mass > 0.001 and mass > 0.001:
+                summary_df['Specific '+label+' Total AM'] = 1000*summary_df[label]/full_mass
+            if area > 0.001:
+                summary_df['Areal '+label] = summary_df[label]/area
+
+    # Discharge/charge metrics
+    if all(col in summary_df.columns for col in ['Discharge Capacity', 'Charge Capacity']):
+        summary_df['CE'] = summary_df['Discharge Capacity']/summary_df['Charge Capacity']
+    if all(col in summary_df.columns for col in ['Discharge Energy', 'Charge Energy']):
+        summary_df['Energy Efficiency'] = summary_df['Discharge Energy']/summary_df['Charge Energy']
+
+    return summary_df
+
+
 def dqdv_single_cycle(capacity, voltage, 
                     polynomial_spline=3, s_spline=1e-5,
                     polyorder_1 = 5, window_size_1=101,
@@ -626,330 +794,10 @@ def dqdv_single_cycle(capacity, voltage,
         return x_volt, smooth_dqdv, smooth_cap
     else:
         return x_volt, dqdv, smooth_cap
-
-"""
-Processing values by cycle number
-"""
-# def cycle_summary(df, current_label=None, mass=None, full_mass=None, area=None):
-#     """
-#     Computes summary statistics for each full cycle returning a new dataframe
-#     with the following columns:
-#     - 'Current': The average current for the cycle
-#     - 'UCV': The upper cut-off voltage for the cycle
-#     - 'LCV': The lower cut-off voltage for the cycle
-#     - 'Discharge Capacity': The maximum discharge capacity for the cycle
-#     - 'Charge Capacity': The maximum charge capacity for the cycle
-#     - 'CE': The charge efficiency for the cycle (Discharge Capacity/Charge Capacity)
-#     - 'Energy Efficiency': The energy efficiency for the cycle (Discharge Energy/Charge Energy)
-#     - 'Specific Discharge Capacity': The maximum specific discharge capacity for the cycle
-#     - 'Specific Charge Capacity': The maximum specific charge capacity for the cycle
-#     - 'Areal Discharge Capacity': The maximum specific discharge capacity for the cycle
-#     - 'Areal Charge Capacity': The maximum specific charge capacity for the cycle
-#     - 'Average Discharge Voltage': The average discharge voltage for the cycle
-#     - 'Average Charge Voltage': The average charge voltage for the cycle
-#     - 'Discharge Energy':  The integral energy on discharge for the cycle
-#     - 'Charge Energy': The integral energy of charge for the cycle
-#     - 'Discharge Overpotential': Overpotential as calculated by the relaxation after discharge
-#     - 'Charge Overpotential': Overpotential as calculated by the relaxation after charge
     
-#     Args:
-#         df (pandas.DataFrame): The input DataFrame containing the data.
-#         current_label (str, optional): The label of the current column. Defaults to None and compares to a list of known current labels.
-#         mass (float): Mass (in mg) of starting cathode material
-#         full_mass (float): Mass (in mg) of fully discharged (e.g. lithiated) cathode
-#         area (float): Area (in cm^2) to normalize by for areal values
 
-#     Returns:
-#         pandas.DataFrame: The summary DataFrame with the calculated values.
-#     """
-#     # TODO take out superfluous logic now that current column is consistent
-#     current_labels = ['Current', 'Current(A)', 'I /mA', 'Current/mA', 'I/mA', '<I>/mA']
-#     # Figuring out which column is current
-#     if current_label is not None:
-#         df[current_label] = df[current_label].astype(float)
-#         summary_df = df.groupby('full cycle')[current_label].mean().to_frame()
-#     else:
-#         intersection = set(current_labels) & set(df.columns)
-#         if len(intersection) > 0:
-#             # Choose the first available label from current labels
-#             for label in current_labels:
-#                 if label in intersection:
-#                     current_label = label
-#                     break
-#             df[current_label] = df[current_label].astype(float)
-#             summary_df = df.groupby('full cycle')[current_label].mean().to_frame()
-#         else:
-#             print('Could not find Current column label. Please supply label to function: current_label=label')
-#             summary_df = pd.DataFrame(index=df['full cycle'].unique())
-
-#     summary_df['UCV'] = df.groupby('full cycle')['Voltage'].max()
-#     summary_df['LCV'] = df.groupby('full cycle')['Voltage'].min()
-
-#     dis_mask = (df['state'] == -1)
-#     dis_index = df.loc[dis_mask]['full cycle'].unique()
-#     if len(dis_index) > 0:
-#         summary_df.loc[dis_index, 'Discharge Capacity'] = df.loc[dis_mask].groupby('full cycle')['Capacity'].max()
-#         dis_cycles = df.loc[df.index[dis_mask]]['half cycle'].unique()
-#         for halfcycle in dis_cycles:
-#             mask = (df['half cycle'] == halfcycle)
-#             cycle = df.loc[mask]['full cycle'].iloc[0] # Full cycle corresponding with this half cycle
-#             energy = np.trapz(df.loc[mask]['Voltage'], df.loc[mask]['Capacity'])
-#             # Add an entry to the summary for each full cycle
-#             summary_df.loc[cycle, 'Discharge Energy'] = energy
-            
-#             # Amount of relaxation at end of discharge
-#             # Only accurate for tests with a single rest in the discharge halfcycle
-#             summary_df.loc[cycle, 'Discharge Overpotential'] = df.loc[mask & (df['state'] == 0)]['Voltage'].max() - df.loc[mask & (df['state'] == -1)]['Voltage'].min()
-            
-#             # Time-weighted average of current/power only among the points in the given half cycle where the cell is not resting
-#             summary_df.loc[cycle, 'Average Discharge Current'] = np.average(df.loc[mask & dis_mask]['Current'], weights=df.loc[mask & dis_mask]['dt'])
-#             summary_df.loc[cycle, 'Average Discharge Power'] = np.average(df.loc[mask & dis_mask]['Power'], weights=df.loc[mask & dis_mask]['dt'])
-#         summary_df['Average Discharge Voltage'] = summary_df['Discharge Energy']/summary_df['Discharge Capacity']
-#         # Adding mass- and area-normalized columns if mass and area are provided
-#         # Ignore if defaults of 0.001 are present, since they result in absurdly high values
-#         if mass > 0.001:
-#             summary_df['Specific Discharge Capacity'] = 1000*summary_df['Discharge Capacity']/mass
-#             summary_df['Specific Discharge Energy'] = 1000*summary_df['Discharge Energy']/mass
-#             summary_df['Specific Average Discharge Current'] = 1000*summary_df['Average Discharge Current']/mass
-#             summary_df['Specific Average Discharge Power'] = 1000*summary_df['Average Discharge Power']/mass
-#         if full_mass > 0.001:
-#             summary_df['Specific Discharge Capacity Total AM'] = 1000*summary_df['Discharge Capacity']/full_mass
-#             summary_df['Specific Discharge Energy Total AM'] = 1000*summary_df['Discharge Energy']/full_mass
-#             summary_df['Specific Average Discharge Current Total AM'] = 1000*summary_df['Average Discharge Current']/full_mass
-#             summary_df['Specific Average Discharge Power Total AM'] = 1000*summary_df['Average Discharge Power']/full_mass
-#         if area > 0.001:
-#             summary_df['Areal Discharge Capacity'] = summary_df['Discharge Capacity']/area
-#             summary_df['Areal Discharge Energy'] = summary_df['Discharge Energy']/area
-#             summary_df['Areal Average Discharge Current'] = summary_df['Average Discharge Current']/area
-#             summary_df['Areal Average Discharge Power'] = summary_df['Average Discharge Power']/area
-
-#     cha_mask = df['state'] == 1
-#     cha_index = df.loc[cha_mask]['full cycle'].unique()
-#     if len(cha_index) > 0:
-#         summary_df.loc[cha_index, 'Charge Capacity'] = df.loc[cha_mask].groupby('full cycle')['Capacity'].max()
-#         cha_cycles = df.loc[df.index[cha_mask]]['half cycle'].unique()
-#         for halfcycle in cha_cycles:
-#             mask = (df['half cycle'] == halfcycle)
-#             cycle = df.loc[mask]['full cycle'].iloc[0] # Full cycle corresponding with this half cycle
-#             energy = np.trapz(df.loc[mask]['Voltage'], df.loc[mask]['Capacity'])
-#             # Add an entry to the summary for each full cycle
-#             summary_df.loc[cycle, 'Charge Energy'] = energy
-            
-#             # Amount of relaxation at end of charge
-#             # Only accurate for tests with a single rest at the end of charge
-#             summary_df.loc[cycle, 'Charge Overpotential'] = df.loc[mask & (df['state'] == 1)]['Voltage'].max() - df.loc[mask & (df['state'] == 0)]['Voltage'].min()
-
-#             # Time-weighted average of current only among the points in the given half cycle where the cell is not resting
-#             summary_df.loc[cycle, 'Average Charge Current'] = np.average(df.loc[mask & cha_mask]['Current'], weights=df.loc[mask & cha_mask]['dt'])
-#             summary_df.loc[cycle, 'Average Charge Power'] = np.average(df.loc[mask & cha_mask]['Power'], weights=df.loc[mask & cha_mask]['dt'])
-#         summary_df['Average Charge Voltage'] = summary_df['Charge Energy']/summary_df['Charge Capacity']
-#         # Discharge/charge metrics
-#         summary_df['CE'] = summary_df['Discharge Capacity']/summary_df['Charge Capacity']
-#         summary_df['Energy Efficiency'] = summary_df['Discharge Energy']/summary_df['Charge Energy']
-#         # Adding mass- and area-normalized columns if mass and area are provided
-#         # Ignore if defaults of 0.001 are present, since they result in absurdly high values
-#         if mass > 0.001:
-#             summary_df['Specific Charge Capacity'] = 1000*summary_df['Charge Capacity']/mass
-#             summary_df['Specific Charge Energy'] = 1000*summary_df['Charge Energy']/mass
-#             summary_df['Specific Average Charge Current'] = 1000*summary_df['Average Charge Current']/mass
-#             summary_df['Specific Average Charge Power'] = 1000*summary_df['Average Charge Power']/mass    
-#         if full_mass > 0.001:
-#             summary_df['Specific Charge Capacity Total AM'] = 1000*summary_df['Charge Capacity']/full_mass
-#             summary_df['Specific Charge Energy Total AM'] = 1000*summary_df['Charge Energy']/full_mass
-#             summary_df['Specific Average Charge Current Total AM'] = 1000*summary_df['Average Charge Current']/full_mass
-#             summary_df['Specific Average Charge Power Total AM'] = 1000*summary_df['Average Charge Power']/full_mass
-#         if area > 0.001:
-#             summary_df['Areal Charge Capacity'] = summary_df['Charge Capacity']/area
-#             summary_df['Areal Charge Energy'] = summary_df['Charge Energy']/area
-#             summary_df['Areal Average Charge Current'] = summary_df['Average Charge Current']/area
-#             summary_df['Areal Average Charge Power'] = summary_df['Average Charge Power']/area
-
-#     return summary_df
-
-def cycle_summary(df, mass=None, full_mass=None, area=None):
-    """
-    Computes summary statistics for each full cycle returning a new dataframe
-    with the following columns:
-    - 'Current': The average current for the cycle
-    - 'UCV': The upper cut-off voltage for the cycle
-    - 'LCV': The lower cut-off voltage for the cycle
-    - 'Discharge Capacity': The maximum discharge capacity for the cycle
-    - 'Charge Capacity': The maximum charge capacity for the cycle
-    - 'CE': The charge efficiency for the cycle (Discharge Capacity/Charge Capacity)
-    - 'Energy Efficiency': The energy efficiency for the cycle (Discharge Energy/Charge Energy)
-    - 'Specific Discharge Capacity': The maximum specific discharge capacity for the cycle
-    - 'Specific Charge Capacity': The maximum specific charge capacity for the cycle
-    - 'Areal Discharge Capacity': The maximum specific discharge capacity for the cycle
-    - 'Areal Charge Capacity': The maximum specific charge capacity for the cycle
-    - 'Average Discharge Voltage': The average discharge voltage for the cycle
-    - 'Average Charge Voltage': The average charge voltage for the cycle
-    - 'Discharge Energy':  The integral energy on discharge for the cycle
-    - 'Charge Energy': The integral energy of charge for the cycle
-    - 'Discharge Overpotential': Overpotential as calculated by the relaxation after discharge
-    - 'Charge Overpotential': Overpotential as calculated by the relaxation after charge
-    
-    Args:
-        df (pandas.DataFrame): The input DataFrame containing the data.
-        mass (float): Mass (in mg) of starting cathode material
-        full_mass (float): Mass (in mg) of fully discharged (e.g. lithiated) cathode
-        area (float): Area (in cm^2) to normalize by for areal values
-
-    Returns:
-        pandas.DataFrame: The summary DataFrame with the calculated values.
-    """
-    # TODO take out superfluous logic now that current column is consistent
-    # current_labels = ['Current', 'Current(A)', 'I /mA', 'Current/mA', 'I/mA', '<I>/mA']
-    # # Figuring out which column is current
-    # if current_label is not None:
-    #     df[current_label] = df[current_label].astype(float)
-    #     summary_df = df.groupby('full cycle')[current_label].mean().to_frame()
-    # else:
-    #     intersection = set(current_labels) & set(df.columns)
-    #     if len(intersection) > 0:
-    #         # Choose the first available label from current labels
-    #         for label in current_labels:
-    #             if label in intersection:
-    #                 current_label = label
-    #                 break
-    #         df[current_label] = df[current_label].astype(float)
-    #         summary_df = df.groupby('full cycle')[current_label].mean().to_frame()
-    #     else:
-    #         print('Could not find Current column label. Please supply label to function: current_label=label')
-    #         summary_df = pd.DataFrame(index=df['full cycle'].unique())
-
-    not_rest_mask = (df['state'] != 0)
-    # Initialize empty dicts. cha_ and dis_records get added to summary_records which is then turned into the summary_df.
-    cha_records = {}
-    dis_records = {}
-    summary_records = {}
-    for cycle in df['full cycle'].unique():
-        cha_hc, dis_hc = halfcycles_from_cycle(df, cycle)
-        summary_records[cycle] = {} # Initialize empty entry to add keys later
-        if cha_hc: # Skip if not present for this cycle
-            mask = (df['half cycle'] == cha_hc)
-            cha_df = df.loc[mask & not_rest_mask] # For averaged values, we want to exclude data points from rest
-            cha_cap = df.loc[mask]['Capacity'].max() # Charge capacity
-            cha_energy = np.trapz(df.loc[mask]['Voltage'], df.loc[mask]['Capacity']) # Charge energy
-            cha_current = np.average(cha_df['Current'], weights=cha_df['dt']) # Average charge current
-            cha_power = np.average(cha_df['Power'], weights=cha_df['dt']) # Average charge power
-            cha_voltage = np.average(cha_df['Voltage'], weights=cha_df['dt']) # Average charge voltage
-            cha_UCV = cha_df['Voltage'].max() # Maximum voltage on charge is upper cutoff voltage
-            cha_overpot = cha_UCV - df.loc[mask]['Voltage'].iloc[-1] # Charge overpotential
-            # Subtract final data point (end of rest) from maximum voltage during charge
-
-            cha_records[cycle] = {
-                'Charge Capacity': cha_cap,
-                'Charge Energy': cha_energy,
-                'Average Charge Current': cha_current,
-                'Average Charge Power': cha_power,
-                'Average Charge Voltage': cha_voltage,
-                'UCV': cha_UCV,
-                'Charge Overpotential': cha_overpot
-            }
-            summary_records[cycle] |= cha_records[cycle] # Add entries to summary_records
-        
-        if dis_hc: # Skip if not present for this cycle
-            mask = (df['half cycle'] == dis_hc)
-            dis_df = df.loc[mask & not_rest_mask] # For averaged values, we want to exclude data points from rest
-            dis_cap = df.loc[mask]['Capacity'].max() # Discharge capacity
-            dis_energy = np.trapz(df.loc[mask]['Voltage'], df.loc[mask]['Capacity']) # Discharge energy
-            dis_current = np.average(dis_df['Current'], weights=dis_df['dt']) # Average discharge current
-            dis_power = np.average(dis_df['Power'], weights=dis_df['dt']) # Average discharge power
-            dis_voltage = np.average(dis_df['Voltage'], weights=dis_df['dt']) # Average discharge voltage
-            dis_LCV = dis_df['Voltage'].min() # Minimum voltage on discharge is lower cutoff voltage
-            dis_overpot =  df.loc[mask]['Voltage'].iloc[-1] - dis_LCV # Discharge overpotential
-            # Subtract minimum voltage during discharge from final rest point
-
-            dis_records[cycle] = {
-                'Discharge Capacity': dis_cap,
-                'Discharge Energy': dis_energy,
-                'Average Discharge Current': dis_current,
-                'Average Discharge Power': dis_power,
-                'Average Discharge Voltage': dis_voltage,
-                'LCV': dis_LCV,
-                'Discharge Overpotential': dis_overpot
-            }
-            summary_records[cycle] |= dis_records[cycle] # Add entries to summary_records
-    summary_df = pd.DataFrame.from_dict(summary_records, orient='index') # Convert the summary_records dict into a df
-    
-    # Adding mass- and area-normalized columns if mass and area are provided
-    # Ignore if defaults of 0.001 are present, since they result in incorrect and absurdly high values
-    if mass > 0.001:
-        summary_df['Specific Discharge Capacity'] = 1000*summary_df['Discharge Capacity']/mass
-        summary_df['Specific Discharge Energy'] = 1000*summary_df['Discharge Energy']/mass
-        summary_df['Specific Average Discharge Current'] = 1000*summary_df['Average Discharge Current']/mass
-        summary_df['Specific Average Discharge Power'] = 1000*summary_df['Average Discharge Power']/mass
-        summary_df['Specific Charge Capacity'] = 1000*summary_df['Charge Capacity']/mass
-        summary_df['Specific Charge Energy'] = 1000*summary_df['Charge Energy']/mass
-        summary_df['Specific Average Charge Current'] = 1000*summary_df['Average Charge Current']/mass
-        summary_df['Specific Average Charge Power'] = 1000*summary_df['Average Charge Power']/mass 
-    if full_mass > 0.001:
-        summary_df['Specific Discharge Capacity Total AM'] = 1000*summary_df['Discharge Capacity']/full_mass
-        summary_df['Specific Discharge Energy Total AM'] = 1000*summary_df['Discharge Energy']/full_mass
-        summary_df['Specific Average Discharge Current Total AM'] = 1000*summary_df['Average Discharge Current']/full_mass
-        summary_df['Specific Average Discharge Power Total AM'] = 1000*summary_df['Average Discharge Power']/full_mass
-        summary_df['Specific Charge Capacity Total AM'] = 1000*summary_df['Charge Capacity']/full_mass
-        summary_df['Specific Charge Energy Total AM'] = 1000*summary_df['Charge Energy']/full_mass
-        summary_df['Specific Average Charge Current Total AM'] = 1000*summary_df['Average Charge Current']/full_mass
-        summary_df['Specific Average Charge Power Total AM'] = 1000*summary_df['Average Charge Power']/full_mass
-    if area > 0.001:
-        summary_df['Areal Discharge Capacity'] = summary_df['Discharge Capacity']/area
-        summary_df['Areal Discharge Energy'] = summary_df['Discharge Energy']/area
-        summary_df['Areal Average Discharge Current'] = summary_df['Average Discharge Current']/area
-        summary_df['Areal Average Discharge Power'] = summary_df['Average Discharge Power']/area
-        summary_df['Areal Charge Capacity'] = summary_df['Charge Capacity']/area
-        summary_df['Areal Charge Energy'] = summary_df['Charge Energy']/area
-        summary_df['Areal Average Charge Current'] = summary_df['Average Charge Current']/area
-        summary_df['Areal Average Charge Power'] = summary_df['Average Charge Power']/area
-
-    # Discharge/charge metrics
-    summary_df['CE'] = summary_df['Discharge Capacity']/summary_df['Charge Capacity']
-    summary_df['Energy Efficiency'] = summary_df['Discharge Energy']/summary_df['Charge Energy']
-
-    return summary_df
-
-def halfcycles_from_cycle(df, cycle):
-    # Determines which half cycles correspond to a given full cycle.
-    # Relies on the fact that charge always precedes discharge in a given cycle.
-    # Returns half cycle number of charge and discharge as a tuple
-    try:
-        mask = ((df['full cycle'] == cycle) & (df['half cycle'] > 0)) # Ignore half cycle 0, which is the initial rest
-        hc = df.loc[mask]['half cycle'].unique()
-        if len(hc) == 2:
-            # If both a charge and discharge half cycle are present, charge comes first
-            cha_hc = min(hc)
-            dis_hc = max(hc)
-        elif len(hc) == 1 and cycle == 0:
-            # In this case, the test starts with discharge and cycle 0 is being requested
-            # Therefore there is no charge half cycle
-            cha_hc = None
-            dis_hc = hc[0]
-        elif len(hc) == 1:
-            # If only one half cycle is found and it's not cycle 0
-            # then only the charge portion of the cycle is present
-            cha_hc = hc[0]
-            dis_hc = None
-        else:
-            print("Invalid number of half cycles detected.")
-            return None, None
-    except TypeError:
-        print("Invalid type for cycle number.")
-        return None, None
-    return cha_hc, dis_hc
-
-
-def cycle_from_halfcycle(df, halfcycle):
-    # Function for determining which cycle corresponds to a given half cycle.
-    try:
-        mask = (df['half cycle'] == halfcycle)
-        return df.loc[mask]['full cycle'].iloc[0]
-    except TypeError:
-        print("Invalid type for halfcycle number.")
-
-"""
-PLOTTING
-"""
-
+# PLOTTING
+# TODO move these to plot.py
 def multi_cycle_plot(df, cycles, colormap='viridis', norm=None):
     """
     Function for plotting continuously coloured cycles (useful for large numbers).
