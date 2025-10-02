@@ -1,12 +1,8 @@
 from galvani import MPRfile
-from galvani import res2sqlite as r2s
-
 import pandas as pd
 import numpy as np
 from scipy.signal import savgol_filter
-import sqlite3
 import os
-import matplotlib.pyplot as plt
 from typing import Union
 from pathlib import Path
 
@@ -15,8 +11,7 @@ from pathlib import Path
 def echem_file_loader(filepath, 
                       df_to_append_to=None, 
                       time_offset=0.0,
-                      calc_cycles_and_cap=True,
-                      debounce=True):
+                      calc_cycles_and_cap=True):
     """
     Loads a variety of electrochemical filetypes and tries to construct the most useful measurements in a
     consistent way, with consistent column labels. Outputs a dataframe with these constructed columns:
@@ -40,7 +35,6 @@ def echem_file_loader(filepath,
         time_offset (float): Amount to increase the time values of newly loaded data in order to stitch together raw data files.
         calc_cycles_and_cap (bool): True if the cycles and capacity should be calculated after appending the new data.
             Set to True after the final piece of raw data has been imported when stitching files.
-        debounce (bool): Runs debouncer function to remove extraneous half cycles.
     
     Returns:
         pandas.DataFrame: A dataframe with the constructed columns.
@@ -54,75 +48,6 @@ def echem_file_loader(filepath,
         gal_file = MPRfile(os.path.join(filepath))
         raw = pd.DataFrame(data=gal_file.data)
         df = biologic_processing(raw)
-
-    # arbin .res file - uses an sql server and requires mdbtools installed
-    # sudo apt get mdbtools for windows and mac
-    elif extension == '.res': 
-        Output_file = 'placeholder_string'
-        r2s.convert_arbin_to_sqlite(os.path.join(filepath), Output_file)
-        dat = sqlite3.connect(Output_file)
-        query = dat.execute("SELECT * From Channel_Normal_Table")
-        cols = [column[0] for column in query.description]
-        df = pd.DataFrame.from_records(data = query.fetchall(), columns = cols)
-        dat.close()
-        df = arbin_res(df)
-
-    # Currently .txt files are assumed to be from an ivium cycler - this may need to be changed
-    # These have time, current and voltage columns only
-    elif extension == '.txt':
-        raw = pd.read_csv(os.path.join(filepath), sep='\t')
-        # Checking columns are an exact match
-        if set(['time /s', 'I /mA', 'E /V']) - set(raw.columns) == set([]):
-            df = ivium_processing(raw)
-        else:
-            raise ValueError('Columns do not match expected columns for an ivium .txt file')
-
-    # Landt and Arbin can output .xlsx and .xls files
-    elif extension in ['.xlsx', '.xls']:
-        if extension == '.xlsx':
-            xlsx = pd.ExcelFile(os.path.join(filepath), engine='openpyxl')
-        else:
-            xlsx = pd.ExcelFile(os.path.join(filepath))
-
-        names = xlsx.sheet_names
-        # Use different Landt processing if all exported as one sheet (different versions of Landt software)
-        if len(names) == 1:
-            raw = xlsx.parse(0)
-            df = new_landt_processing(raw)
-
-        # If Record is a sheet name, then it is a Landt file
-        elif "Record" in names[0]:
-            df_list = [xlsx.parse(0)]
-            if not isinstance(df_list, list) or not isinstance(df_list[0], pd.DataFrame):
-                raise RuntimeError("First sheet is not a dataframe; cannot continue parsing {filepath=}")
-            col_names = df_list[0].columns
-
-            for sheet_name in names[1:]:
-                if "Record" in sheet_name:
-                    if len(xlsx.parse(sheet_name, header=None)) != 0:
-                        df_list.append(xlsx.parse(sheet_name, header=None))
-            for sheet in df_list:
-                if not isinstance(sheet, pd.DataFrame):
-                    raise RuntimeError("Sheet is not a dataframe; cannot continue parsing {filepath=}")
-                sheet.columns = col_names
-            raw = pd.concat(df_list)
-            raw.set_index('Index', inplace=True)
-            df = old_landt_processing(raw)
-
-        # If Channel is a sheet name, then it is an arbin file
-        else:
-            df_list = []
-            # Remove the Channel_Chart sheet if it exists as it's arbin's charting sheet
-            if 'Channel_Chart' in names:
-                names.remove('Channel_Chart')
-            for count, name in enumerate(names):
-                if 'Channel' in name and 'Chart' not in name:
-                    df_list.append(xlsx.parse(count))
-            if len(df_list) > 0:
-                raw = pd.concat(df_list)
-                df = arbin_excel(raw)
-            else:
-                raise ValueError('Names of sheets not recognised')
             
     # Neware files are .nda or .ndax
     elif extension in (".nda", ".ndax"):
@@ -164,26 +89,47 @@ def echem_file_loader(filepath,
     # Stop here if the cycles and capacity don't need to be calculated yet
     if not calc_cycles_and_cap:
         return df
+    
+    df['Current'] = df['Current'].fillna(0.0) # Replace nan values to prevent later problems
+    if df.at[0, 'state'] != 0: # If df does not begin with rest, prepend a rest point
+        placeholder_voltage = df['Voltage'].loc[0]
+        placeholder = pd.DataFrame({'Time':[0], 'dt':[0], 'Current':[0], 'Voltage':[placeholder_voltage], 'state':[0], 'dQ':[0]})
+        df = pd.concat([placeholder, df], ignore_index=True)
+        df.index.name = 'id' # Restore index name after concat
 
     # Sort by time before calculating cycle numbers, etc.
     # In case multiple points have the same time value, sort by id
     df.sort_values(by=['Time','id'], inplace=True)
+    df.reset_index(drop=True, inplace=True)
 
     # Calculate Q (running total capacity) to use as a check for half cycle alternation
     df['Q'] = df['dQ'].cumsum()
 
     # Calculate cycle numbers
     rest_mask = (df['state'] == 0)
-    df['cycle change'] = False
-    df['rest count'] = rest_mask.cumsum() # Helper column
     df['cycle change candidate'] = False # Helper column
     if (~rest_mask).any(): # If there is non-rest data
-        # When state changes from 1 to -1 or -1 to 1, it is a candidate for a cycle change
-        # But could also be caused by current transients
-        # There should be rest between each charge and discharge half cycle, so check for an increment in number of rest points
-        df.loc[~rest_mask, 'cycle change candidate'] = df.loc[~rest_mask, 'state'].ne(df.loc[~rest_mask, 'state'].shift())
-        df.loc[df['cycle change candidate'], 'cycle change'] = df.loc[df['cycle change candidate'], 'rest count'].ne(df.loc[df['cycle change candidate'], 'rest count'].shift())
-        df.drop(columns=['rest count', 'cycle change candidate'], inplace=True) # Clean up helper columns
+        # When state changes from rest to charge or discharge, this is the start of a new block
+        df['cycle change candidate'] = (~rest_mask) & rest_mask.shift(fill_value=True)
+        df['block'] = df['cycle change candidate'].cumsum()
+        block_state = df.groupby('block')['Q'].agg(lambda x: int(np.sign(x.iloc[-1] - x.iloc[0])))
+        half_cycle_id = (block_state != block_state.shift(fill_value=block_state.iloc[0])).cumsum() # Increment half cycle when consecutive blocks have different states
+        # e.g. charge followed by discharge
+        # This will keep GITT pulses grouped into the same half cycle, correctly
+        # Fill value is used to make sure the initial rest is numbered half cycle 0
+        df['half cycle'] = df['block'].map(half_cycle_id) # Assign half cycles to correct column
+        cycle_state = df.groupby('half cycle')['Q'].agg(lambda x: int(np.sign(x.iloc[-1] - x.iloc[0])))
+        df['cycle state'] = df['block'].map(cycle_state)
+        df.drop(columns=['block', 'cycle change candidate'], inplace=True) # Clean up helper columns
+        initial_state = half_cycle_id[1] # State of first non-rest half cycle determines full cycle behavior
+        # Adding a full cycle column
+        # 1 full cycle is charge then discharge; code considers which the test begins with
+        if initial_state == -1: # Cell starts in discharge
+            df['full cycle'] = (df['half cycle']/2).apply(np.floor).astype(int)
+        elif initial_state == 1: # Cell starts in charge
+            df['full cycle'] = (df['half cycle']/2).apply(np.ceil).astype(int)
+        else:
+            print("Invalid state in half cycle 1.")
     else:
         # If nothing is found for not_rest_idx, then all points are at rest
         # Therefore all the following values can be set to 0
@@ -193,29 +139,6 @@ def echem_file_loader(filepath,
         df['Capacity'] = 0
         df['Power'] = 0
         print("No charge or discharge data found.")
-        return df
-    df['half cycle'] = (df['cycle change'] == True).cumsum() # Each time a cycle change occurs, increment half cycle
-    # For each cycle, determine the state from change in Q
-    # Most of the time this is the same as 'state' calculated at each point from current, except in the case of transients
-    cycle_state = df.groupby('half cycle')['Q'].agg(lambda x: int(np.sign(x.iloc[-1] - x.iloc[0])))
-    df['cycle state'] = df['half cycle'].map(cycle_state) # Assign a value of cycle state to each point in df
-    # Sanity check: the half cycle 0 should have a change in Q of 0 (only rest)
-    # and each subsequent half cycle should alternate in sign (charge then discharge, etc.)
-    alternation_ok = (cycle_state.values[2:] * cycle_state.values[1:-1] == -1).all() # True if every half cycle starting with 1 alternates cycle state sign
-    if cycle_state[0] != 0:
-        print("Unexpected state in half cycle 0.")
-        return df
-    if not alternation_ok:
-        print("Invalid half cycle definitions.")
-        return df
-    # Adding a full cycle column
-    # 1 full cycle is charge then discharge; code considers which the test begins with
-    if cycle_state[1] == -1: # Cell starts in discharge
-        df['full cycle'] = (df['half cycle']/2).apply(np.floor).astype(int)
-    elif cycle_state[1] == 1: # Cell starts in charge
-        df['full cycle'] = (df['half cycle']/2).apply(np.ceil).astype(int)
-    else:
-        print("Unexpected state in half cycle 1.")
         return df
 
     # Calculate Capacity (reset each half cycle)
@@ -244,31 +167,23 @@ def state_from_current(x):
 
 def halfcycles_from_cycle(df, cycle):
     # Determines which half cycles correspond to a given full cycle.
-    # Relies on the fact that charge always precedes discharge in a given cycle.
     # Returns half cycle number of charge and discharge as a tuple
     try:
-        mask = ((df['full cycle'] == cycle) & (df['half cycle'] > 0)) # Ignore half cycle 0, which is the initial rest
-        hc = df.loc[mask]['half cycle'].unique()
-        if len(hc) == 2:
-            # If both a charge and discharge half cycle are present, charge comes first
-            cha_hc = min(hc)
-            dis_hc = max(hc)
-        elif len(hc) == 1 and cycle == 0:
-            # In this case, the test starts with discharge and cycle 0 is being requested
-            # Therefore there is no charge half cycle
-            cha_hc = None
-            dis_hc = hc[0]
-        elif len(hc) == 1:
-            # If only one half cycle is found and it's not cycle 0
-            # then only the charge portion of the cycle is present
-            cha_hc = hc[0]
-            dis_hc = None
-        else:
-            print(f"Invalid number of half cycles detected in cycle {cycle}.")
-            return None, None
-    except TypeError:
-        print(f"Invalid cycle number: {cycle}.")
+        mask = (df['full cycle'] == cycle)
+    except:
+        print(f"Invalid value for cycle: {cycle}.")
         return None, None
+    cha_mask = (df['cycle state'] == 1) # Charging half cycle
+    dis_mask = (df['cycle state'] == -1) # Discharging half cycle
+    if (mask & cha_mask).any():
+        cha_hc = df.loc[mask & cha_mask]['half cycle'].iloc[0]
+    else:
+        cha_hc = None
+    if (mask & dis_mask).any():
+        dis_hc = df.loc[mask & dis_mask]['half cycle'].iloc[0]
+    else:
+        dis_hc = None
+
     return cha_hc, dis_hc
 
 
@@ -281,49 +196,6 @@ def cycle_from_halfcycle(df, halfcycle):
         print(f"Invalid halfcycle number: {halfcycle}.")
         return None
 
-
-def calculate_cycle_numbers(df):
-    """
-    Determine when a test is switching between charge and discharge, then calculate half cycle and full cycle numbers for each point in the df.
-    """
-    rest_mask = (df['state'] == 0)
-    df['cycle change'] = False
-    df['rest count'] = rest_mask.cumsum() # Helper column
-    df['cycle change candidate'] = False # Helper column
-    if (~rest_mask).any(): # If there is non-rest data
-        # When state changes from 1 to -1 or -1 to 1, it is a candidate for a cycle change
-        # But could also be caused by current transients
-        # There should be rest between each charge and discharge half cycle, so check for an increment in number of rest points
-        df.loc[~rest_mask, 'cycle change candidate'] = df.loc[~rest_mask, 'state'].ne(df.loc[~rest_mask, 'state'].shift())
-        df.loc[df['cycle change candidate'], 'cycle change'] = df.loc[df['cycle change candidate'], 'rest count'].ne(df.loc[df['cycle change candidate'], 'rest count'].shift())
-        df.drop(columns=['rest count', 'cycle change candidate'], inplace=True) # Clean up helper columns
-    else:
-        # If nothing is found for not_rest_idx, then all points are at rest
-        # Therefore all the following values can be set to 0
-        df['half cycle'] = 0
-        df['full cycle'] = 0
-        df['Q'] = 0
-        df['Capacity'] = 0
-        df['Power'] = 0
-        print("No charge or discharge data found.")
-        return df
-
-    df['half cycle'] = (df['cycle change'] == True).cumsum() # Each time a cycle change occurs, increment half cycle
-    # Adding a full cycle column
-    # 1 full cycle is charge then discharge; code considers which the test begins with
-    first_halfcycle = df.loc[df['half cycle'] == 1]
-    initial_state = np.sign(first_halfcycle['dQ'].cumsum().iloc[-1] - first_halfcycle['dQ'].cumsum().iloc[0]) # Difference in Q between last and first point is charge passed
-    # If charge passed is > 0, then test starts in charge, vice versa
-    # Has to do the cumsum because Q has not been generated yet when calculate_cycle_numbers is called
-    if initial_state == -1: # Cell starts in discharge
-        df['full cycle'] = (df['half cycle']/2).apply(np.floor).astype(int)
-    elif initial_state == 1: # Cell starts in charge
-        df['full cycle'] = (df['half cycle']/2).apply(np.ceil).astype(int)
-    else:
-        print("Unexpected state in the first data point of half cycle 1.")
-        return None
-    return df
-        
 
 def df_post_process(df, mass=0, full_mass=0, area=0):
     """
@@ -348,69 +220,10 @@ def df_post_process(df, mass=0, full_mass=0, area=0):
                 df['Specific '+label+' Total AM'] = 1000*df[label]/full_mass
             if area > 0.001:
                 df['Areal '+label] = df[label]/area
-
-
-    # # Adding mass- and area-normalized columns if mass and area are provided
-    # # Ignore if defaults of 0.001 are present, since they result in absurdly high values
-    # if mass > 0.001:
-    #     df['Specific Capacity'] = 1000*df['Capacity']/mass
-    #     df['Specific Q'] = 1000*df['Q']/mass
-    #     df['Specific Current'] = 1000*df['Current']/mass
-    #     df['Specific Power'] = 1000*df['Power']/mass
-    # if full_mass > 0.001 and mass > 0.001:
-    #     df['Specific Capacity Total AM'] = 1000*df['Capacity']/full_mass
-    #     df['Specific Q Total AM'] = 1000*df['Q']/full_mass
-    #     df['Specific Current Total AM'] = 1000*df['Current']/full_mass
-    #     df['Specific Power Total AM'] = 1000*df['Power']/full_mass        
-    # if area > 0.001:
-    #     df['Areal Capacity'] = df['Capacity']/area
-    #     df['Areal Q'] = df['Q']/area
-    #     df['Areal Current'] = df['Current']/area
-    #     df['Areal Power'] = df['Power']/area
     return df
 
 
 # IMPORT FUNCTIONS
-def arbin_res(df):
-    """
-    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the galvani res2sqlite for Arbin .res files.
-
-    Args:
-        df (pandas.DataFrame): The input DataFrame containing the data.
-
-    Returns:
-        pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
-    """
-    df.set_index('Data_Point', inplace=True)
-    df.sort_index(inplace=True)
-
-    df['state'] = df['Current'].map(lambda x: state_from_current(x))
-    not_rest_idx = df[df['state'] != 0].index
-    df['cycle change'] = False
-    # If the state changes, then it's a half cycle change
-    df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
-    df['half cycle'] = (df['cycle change'] == True).cumsum()
-
-    # Calculating the capacity and changing to mAh
-    if 'Discharge_Capacity' in df.columns:
-        df['Capacity'] = df['Discharge_Capacity'] + df['Charge_Capacity']
-    elif 'Discharge_Capacity(Ah)' in df.columns:
-        df['Capacity'] = df['Discharge_Capacity(Ah)'] + df['Charge_Capacity(Ah)'] * 1000
-    else:
-        raise KeyError('Unable to find capacity columns, do not match Charge_Capacity or Charge_Capacity(Ah)')
-
-    # Subtracting the initial capacity from each half cycle so it begins at zero
-    for cycle in df['half cycle'].unique():
-        idx = df[(df['half cycle'] == cycle) & (df['state'] != 0)].index
-        if len(idx) > 0:
-            cycle_idx = df[df['half cycle'] == cycle].index
-            initial_capacity = df.loc[idx[0], 'Capacity']
-            df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, 'Capacity'] - initial_capacity
-        else:
-            pass
-
-    return df
-
 def biologic_processing(raw):
     """
     Process the given DataFrame to generate a standardized output DataFrame. 
@@ -492,117 +305,6 @@ def bt_export_processing(raw):
 
     return df
 
-def ivium_processing(df):
-    """
-    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the Ivium .txt files.
-    For Ivium files the cycler records the bare minimum (Current, Voltage, Time) and everything else is calculated from that.
-
-    Args:
-        df (pandas.DataFrame): The input DataFrame containing the data.
-
-    Returns:
-        pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
-    """
-
-    df['dq'] = np.diff(df['time /s'], prepend=0)*df['I /mA']
-    df['Capacity'] = df['dq'].cumsum()/3600
-
-    df['state'] = df['I /mA'].map(lambda x: state_from_current(x))
-    df['half cycle'] = df['state'].ne(df['state'].shift()).cumsum()
-    for cycle in df['half cycle'].unique():
-        mask = (df['half cycle'] == cycle)
-        idx = df.index[mask]
-        df.loc[idx, 'Capacity'] = abs(df.loc[idx, 'dq']).cumsum()/3600
-    df['Voltage'] = df['E /V']
-    df['Time'] = df['time /s']
-    return df
-
-def new_landt_processing(df):
-    """
-    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the Landt .xlsx files.
-    Landt has many different ways of exporting the data - so this is for one specific way of exporting the data.
-
-    Args:
-        df (pandas.DataFrame): The input DataFrame containing the data.
-
-    Returns:
-        pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
-    """
-    # Remove half cycle == 0 for initial resting
-    if 'Voltage/V' not in df.columns:
-        column_to_search = df.columns[df.isin(['Index']).any()][0]
-        df.columns = df[df[column_to_search] == 'Index'].iloc[0]
-    df = df[df['Current/mA'].apply(type) != str]
-    df = df[pd.notna(df['Current/mA'])]
-
-    df['state'] = df['Current/mA'].map(lambda x: state_from_current(x))
-
-    not_rest_idx = df[df['state'] != 0].index
-    df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
-    df['half cycle'] = (df['cycle change'] == True).cumsum()
-    df['Voltage'] = df['Voltage/V']
-    df['Capacity'] = df['Capacity/mAh']
-    df['Time'] = df['time /s']
-    return df
-
-def old_landt_processing(df):
-    """
-    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the Landt .xlsx files.
-    Landt has many different ways of exporting the data - so this is for one specific way of exporting the data.
-
-    Args:
-        df (pandas.DataFrame): The input DataFrame containing the data.
-
-    Returns:
-        pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
-    """
-    df = df[df['Current/mA'].apply(type) != str]
-    df = df[pd.notna(df['Current/mA'])]
-
-    df['state'] = df['Current/mA'].map(lambda x: state_from_current(x))
-    not_rest_idx = df[df['state'] != 0].index
-    df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
-    df['half cycle'] = (df['cycle change'] == True).cumsum()
-    df['Voltage'] = df['Voltage/V']
-    df['Capacity'] = df['Capacity/mAh']
-    return df
-
-def arbin_excel(df):
-    """
-    Process the given DataFrame to calculate capacity and cycle changes. Works for dataframes from the Arbin .xlsx files.
-
-    Args:
-        df (pandas.DataFrame): The input DataFrame containing the data.
-
-    Returns:
-        pandas.DataFrame: The processed DataFrame with added columns for capacity and cycle changes.
-    """
-
-    df.reset_index(inplace=True)
-
-    df['state'] = df['Current(A)'].map(lambda x: state_from_current(x))
-
-    not_rest_idx = df[df['state'] != 0].index
-    df.loc[not_rest_idx, 'cycle change'] = df.loc[not_rest_idx, 'state'].ne(df.loc[not_rest_idx, 'state'].shift())
-    df['half cycle'] = (df['cycle change'] == True).cumsum()
-    # Calculating the capacity and changing to mAh
-    df['Capacity'] = (df['Discharge_Capacity(Ah)'] + df['Charge_Capacity(Ah)']) * 1000
-
-    for cycle in df['half cycle'].unique():
-        idx = df[(df['half cycle'] == cycle) & (df['state'] != 0)].index  
-        if len(idx) > 0:
-            cycle_idx = df[df['half cycle'] == cycle].index
-            initial_capacity = df.loc[idx[0], 'Capacity']
-            df.loc[cycle_idx, 'Capacity'] = df.loc[cycle_idx, 'Capacity'] - initial_capacity
-        else:
-            pass
-
-    df['Voltage'] = df['Voltage(V)']
-    df['Current'] = df['Current(A)']
-    if "Test_Time(s)" in df.columns:
-        df["Time"] = df["Test_Time(s)"]
-
-    return df
 
 def neware_reader(filename: Union[str, Path]) -> pd.DataFrame:
     """
