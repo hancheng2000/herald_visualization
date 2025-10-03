@@ -2,6 +2,7 @@ from galvani import MPRfile
 import pandas as pd
 import numpy as np
 from scipy.signal import savgol_filter
+from scipy.integrate import simpson as simp
 import os
 from typing import Union
 from pathlib import Path
@@ -112,14 +113,20 @@ def echem_file_loader(filepath,
         # When state changes from rest to charge or discharge, this is the start of a new block
         df['cycle change candidate'] = (~rest_mask) & rest_mask.shift(fill_value=True)
         df['block'] = df['cycle change candidate'].cumsum()
-        block_state = df.groupby('block')['Q'].agg(lambda x: int(np.sign(x.iloc[-1] - x.iloc[0])))
+        block_deltaQ = df.groupby('block')['Q'].agg(lambda x: x.iloc[-1] - x.iloc[0])
+        block_avg_current = df.groupby('block')['Current'].mean()
+        block_state = np.sign(block_deltaQ).fillna(0).astype(int)
+        block_state[block_state == 0] = np.sign(block_avg_current[block_state == 0]).fillna(0).astype(int) # If deltaQ is 0, use current within block instead
         half_cycle_id = (block_state != block_state.shift(fill_value=block_state.iloc[0])).cumsum() # Increment half cycle when consecutive blocks have different states
         # e.g. charge followed by discharge
         # This will keep GITT pulses grouped into the same half cycle, correctly
         # Fill value is used to make sure the initial rest is numbered half cycle 0
         df['half cycle'] = df['block'].map(half_cycle_id) # Assign half cycles to correct column
-        cycle_state = df.groupby('half cycle')['Q'].agg(lambda x: int(np.sign(x.iloc[-1] - x.iloc[0])))
-        df['cycle state'] = df['block'].map(cycle_state)
+        halfcycle_deltaQ = df.groupby('half cycle')['Q'].agg(lambda x: x.iloc[-1] - x.iloc[0])
+        halfcycle_avg_current = df.groupby('half cycle')['Current'].mean()
+        cycle_state = np.sign(halfcycle_deltaQ).fillna(0).astype(int)
+        cycle_state[cycle_state == 0] = np.sign(halfcycle_avg_current[cycle_state == 0]).fillna(0).astype(int)
+        df['cycle state'] = df['half cycle'].map(cycle_state)
         df.drop(columns=['block', 'cycle change candidate'], inplace=True) # Clean up helper columns
         initial_state = half_cycle_id[1] # State of first non-rest half cycle determines full cycle behavior
         # Adding a full cycle column
@@ -163,6 +170,17 @@ def state_from_current(x):
     except:
         print(f"Unexpected value in current: {x}")
         raise ValueError('Unexpected value in current')
+
+
+# Calculate whether a block (e.g. halfcycle) is overall discharge, charge, or rest
+def compute_block_state(group):
+    deltaQ = group['Q'].iloc[-1] - group['Q'].iloc[0] # Difference in Q from beginning to end of block
+    s = np.sign(deltaQ)
+    if np.isnan(s):
+        s = 0
+    if s == 0: # If no deltaQ recorded, fall back to using current
+        s = np.sign(group['Current'].mean())
+    return int(s)
 
 
 def halfcycles_from_cycle(df, cycle):
@@ -336,7 +354,7 @@ def neware_reader(filename: Union[str, Path]) -> pd.DataFrame:
 
 
 # Processing values by cycle number
-def cycle_summary(df, mass=None, full_mass=None, area=None):
+def cycle_summary(df, mass=0, full_mass=0, area=0):
     """
     Computes summary statistics for each full cycle returning a new dataframe
     with the following columns:
@@ -378,12 +396,12 @@ def cycle_summary(df, mass=None, full_mass=None, area=None):
         if cha_hc: # Skip if not present for this cycle
             mask = (df['half cycle'] == cha_hc)
             cha_df = df.loc[mask & not_rest_mask] # For averaged values, we want to exclude data points from rest
-            if (cha_df['Time'].max() != cha_df['Time'].min()): # Check that non-zero time has elapsed in the halfcycle
+            if (cha_df['dt'].sum()): # Make sure the weights are valid
                 wts = cha_df['dt']
             else:
                 wts = None # If no time has elapsed, this will unweight the time-based averages later to prevent a DivByZero error
             cha_cap = df.loc[mask]['Capacity'].max() # Charge capacity
-            cha_energy = np.trapz(df.loc[mask]['Voltage'], df.loc[mask]['Capacity']) # Charge energy
+            cha_energy = simp(df.loc[mask]['Voltage'], x=df.loc[mask]['Capacity']) # Charge energy (Simpson's rule)
             cha_current = np.average(cha_df['Current'], weights=wts) # Average charge current
             cha_power = np.average(cha_df['Power'], weights=wts) # Average charge power
             cha_voltage = np.average(cha_df['Voltage'], weights=wts) # Average charge voltage
@@ -405,12 +423,12 @@ def cycle_summary(df, mass=None, full_mass=None, area=None):
         if dis_hc: # Skip if not present for this cycle
             mask = (df['half cycle'] == dis_hc)
             dis_df = df.loc[mask & not_rest_mask] # For averaged values, we want to exclude data points from rest
-            if (dis_df['Time'].max() != dis_df['Time'].min()): # Check that non-zero time has elapsed in the halfcycle
+            if (dis_df['dt'].sum()): # Check that non-zero time has elapsed in the halfcycle
                 wts = dis_df['dt']
             else:
                 wts = None # If no time has elapsed, this will unweight the time-based averages later to prevent a DivByZero error
             dis_cap = df.loc[mask]['Capacity'].max() # Discharge capacity
-            dis_energy = np.trapz(df.loc[mask]['Voltage'], df.loc[mask]['Capacity']) # Discharge energy
+            dis_energy = simp(df.loc[mask]['Voltage'], x=df.loc[mask]['Capacity']) # Discharge energy (Simpson's rule)
             dis_current = np.average(dis_df['Current'], weights=wts) # Average discharge current
             dis_power = np.average(dis_df['Power'], weights=wts) # Average discharge power
             dis_voltage = np.average(dis_df['Voltage'], weights=wts) # Average discharge voltage

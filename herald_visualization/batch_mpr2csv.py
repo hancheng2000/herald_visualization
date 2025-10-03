@@ -1,4 +1,4 @@
-import os, glob, sys, argparse
+import os, glob, argparse
 from herald_visualization.mpr2csv import cycle_mpr2csv
 
 # Argument parsing
@@ -7,7 +7,7 @@ parser.add_argument('-a', '--all', help="Analyze even if no new data is found si
 parser.add_argument('-d', '--dry-run', help="Do not export csv after analysis.", action='store_false')
 # parser.add_argument('-o', '--opt-timeout', help="Wait x sec for user response at prompts. Set to -1 to wait indefinitely. Default 10. (Not implemented)", default=10.0, type=float)
 parser.add_argument('-r', '--recent', help="Only analyze tests with new data from the past x days.", type=float)
-parser.add_argument('-s', '--warn-size', help="Warn and wait for input if data filesize exceeds this value (MB). (Not implemented)", type=float)
+parser.add_argument('-s', '--skip-size', help="Skip analysis if data filesize exceeds this value (MB).", type=float)
 args = parser.parse_args()
 export_csv = args.dry_run # Set flag for exporting csv (False if -d arg is given)
 if args.recent:
@@ -54,12 +54,11 @@ for path in glob_list:
         # If --recent is set, only consider tests with data newer than requested, otherwise all tests from above
         if args.recent and latest_data_time < earliest_time:
             raise ValueError('Data too old')  
-        if args.warn_size: # If flag is set to warn above a certain file size
+        if args.skip_size: # If flag is set to skip above a certain file size
             total_data_size = sum([os.path.getsize(file) for file in data_files])/(1024**2) # Calculate total size of data files in MB
-            if total_data_size > args.warn_size:
-                inp = input(f"File size in {path} ({total_data_size} MB) exceeds {args.warn_size} MB. Press 'y' to analyze anyway, any other key to abort.")
-                if inp.lower() != 'y':
-                    raise ValueError('File size too large')
+            if total_data_size > args.skip_size:
+                print(f"File size in {path} ({total_data_size} MB) exceeds {args.skip_size} MB. Analysis skipped.")
+                raise ValueError('File size too large')
     except:
         # Return to the base path if there's an error, otherwise we're left stranded in a random dir
         os.chdir(base_path)
