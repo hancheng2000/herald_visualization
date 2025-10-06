@@ -28,13 +28,17 @@ glob_list.sort() # Sorting alphanumerically makes it easier to determine how far
 run_count = 0
 for path in glob_list:
     full_path = os.path.join(root_dir, path)
+    # if 'BCS905' not in full_path.split('/'):
+        # print(f"Skipping {full_path} as it is not a BCS905 data path.")
+        # continue
+    print(f"Processing {full_path}")
+    output_files = glob.glob(os.path.join(full_path, 'outputs', '*.csv'))
+    if len(output_files) > 0:
+        processed_time = max([os.path.getmtime(file) for file in output_files])
+    else:
+        processed_time = 0 # Makes program consider the (nonexistent) summary file as outdated
+    data_files = glob.glob(os.path.join(full_path, '*.mpr')) + glob.glob(os.path.join(full_path, '*.csv'))
     try:
-        output_files = glob.glob(os.path.join(full_path, 'outputs', '*.csv'))
-        if len(output_files) > 0:
-            processed_time = max([os.path.getmtime(file) for file in output_files])
-        else:
-            processed_time = 0 # Makes program consider the (nonexistent) summary file as outdated
-        data_files = glob.glob(os.path.join(full_path, '*.mpr')) + glob.glob(os.path.join(full_path, '*.csv'))
         # Looks for both .mpr files from EC-Lab and .csv files from BT-Export
         latest_data_time = max([os.path.getmtime(file) for file in data_files])
         if latest_data_time > processed_time or process_all_files:

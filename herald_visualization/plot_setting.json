@@ -1,0 +1,22 @@
+{
+  "axes.labelsize": 20,
+  "axes.labelweight": "bold",
+  "xtick.labelsize": 18,
+  "ytick.labelsize": 18,
+  "xtick.major.size": 7,
+  "ytick.major.size": 7,
+  "xtick.major.width": 2.0,
+  "ytick.major.width": 2.0,
+  "xtick.direction": "in",
+  "ytick.direction": "in",
+  "font.size": 24,
+  "axes.linewidth": 2.0,
+  "lines.dashed_pattern": [5, 2.5],
+  "lines.markersize": 10,
+  "lines.linewidth": 3,
+  "lines.markeredgewidth": 1,
+  "lines.markeredgecolor": "k",
+  "legend.fontsize": 16,
+  "legend.title_fontsize": 24,
+  "legend.frameon": true
+}
