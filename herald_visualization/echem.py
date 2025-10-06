@@ -128,7 +128,6 @@ def echem_file_loader(filepath,
         cycle_state[cycle_state == 0] = np.sign(halfcycle_avg_current[cycle_state == 0]).fillna(0).astype(int)
         df['cycle state'] = df['half cycle'].map(cycle_state)
         df.drop(columns=['block', 'cycle change candidate'], inplace=True) # Clean up helper columns
-        print(cycle_state)
         initial_state = cycle_state[1] # State of first non-rest half cycle determines full cycle behavior
         # Adding a full cycle column
         # 1 full cycle is charge then discharge; code considers which the test begins with

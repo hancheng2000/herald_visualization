@@ -46,167 +46,6 @@ dqdv_capacity_col_to_label = {
     'Areal Capacity': 'dQ/dV (mAh/V/cm$^2$)'
 }
 
-def plot_gitt(
-        dir_name,
-        norm=None,
-        fig=None,
-        ax=None,
-        full_cycles = None,
-        half_cycles = None,
-        save_png = False,
-        png_filename = None,
-        plt_params = None
-    ):
-
-    # plotting params
-    if plt_params != None:
-        plt.rcParams.update(plt_params)
-    else:
-        plt.rcParams.update(default_params)
-    df, df_sum, _ = parse_cycle_csv(dir_name)
-
-        # Determine type of capacity to plot, based on value of arg norm
-    if norm is None:
-        capacity_col = 'Capacity'
-        capacity_label = 'Capacity / mAh'
-    elif norm == 'mass' and 'Specific Capacity' in df.columns:
-        capacity_col = 'Specific Capacity'
-        capacity_label = 'Specific Capacity / mAh/g cathode'
-    elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
-        capacity_col = 'Specific Capacity Total AM'
-        capacity_label = 'Specific Capacity / mAh/g AM'
-    elif norm == 'area' and 'Areal Capacity' in df.columns:
-        capacity_col = 'Areal Capacity'
-        capacity_label = 'Areal Capacity / mAh/cm$^2$'
-    else:
-        print("Invalid argument for norm or required column not present in df.")
-
-    if fig == None and ax == None:
-        fig, ax = plt.subplots()
-    colors = plt.cm.rainbow(np.linspace(0,1.0,len(full_cycles)*2))
-    print(half_cycles)
-    for i,cycle in enumerate(half_cycles[1:]):
-        df1 = df[df['half cycle']==cycle]
-        # round the whole df to 4 decimal places
-        df1 = df1.round(4)
-        # remove 0 specific capacity
-        # df1 = df1[df1[capacity_col]!=0]
-        df1[capacity_col] = df1[capacity_col] - df1[capacity_col].min()
-        # remove decreasing specific capacity
-        df1 = df1[df1[capacity_col].cummax() == df1[capacity_col]]
-        if cycle == 1:
-            plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle)],label='Cycle 0',linestyle='-')
-        else:
-            if cycle % 2 == 1:
-                plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle-1)],label='Cycle '+str(int((cycle-1)/2)),linestyle='-')
-            else:
-                plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle)],linestyle='-')
-    plt.xlabel(capacity_label)
-    plt.ylabel('Voltage vs Li/Li+ (V)')
-    plt.legend(frameon=False)
-    plt.tight_layout()
-    if save_png:
-        if png_filename == None:
-            png_filename = os.path.join(dir_name,'outputs','cycle.png')
-        plt.savefig(png_filename,dpi=300)
-    return fig, ax
-
-def plot_ocv(
-        dir_name,
-        norm=None,
-        fig=None,
-        ax=None,
-        full_cycles = None,
-        half_cycles = None,
-        save_png = False,
-        png_filename = None,
-        plt_params = None,
-    ):
-
-    # plotting params
-    if plt_params != None:
-        plt.rcParams.update(plt_params)
-    else:
-        plt.rcParams.update(default_params)
-    df, df_sum, full_cycles, half_cycles = parse_cycle_csv(dir_name,full_cycles,half_cycles)
-
-        # Determine type of capacity to plot, based on value of arg norm
-    if norm is None:
-        capacity_col = 'Capacity'
-        capacity_label = 'Capacity / mAh'
-    elif norm == 'mass' and 'Specific Capacity' in df.columns:
-        capacity_col = 'Specific Capacity'
-        capacity_label = 'Specific Capacity / mAh/g cathode'
-    elif norm == 'full_mass' and 'Specific Capacity Total AM' in df.columns:
-        capacity_col = 'Specific Capacity Total AM'
-        capacity_label = 'Specific Capacity / mAh/g AM'
-    elif norm == 'area' and 'Areal Capacity' in df.columns:
-        capacity_col = 'Areal Capacity'
-        capacity_label = 'Areal Capacity / mAh/cm$^2$'
-    else:
-        print("Invalid argument for norm or required column not present in df.")
-
-    if fig == None and ax == None:
-        fig, ax = plt.subplots()
-    colors = plt.cm.rainbow(np.linspace(0,1.0,len(full_cycles)*2))
-    for i,cycle in enumerate(half_cycles[1:]):
-        df1 = df[df['half cycle'] == cycle]
-        # round the whole df to 4 decimal places
-        df1 = df1.round(4)
-        df1[capacity_col] = df1[capacity_col] - df1[capacity_col].min()
-        # remove decreasing specific capacity
-        df1 = df1[df1[capacity_col].cummax() == df1[capacity_col]]
-        # get the ocv through 'state' column, 0 for OCV
-        df1 = df1[df1['state'] == 0]
-        df1 = df1.groupby(capacity_col).max().reset_index()
-        if cycle % 2 == 1: 
-            plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle)],label='Cycle '+str(int((cycle-1)/2)) + 'OCV',linestyle='-')
-        else:
-            plt.plot(df1[capacity_col],df1['Voltage'],color=colors[int(cycle-1)],linestyle='--')
-    plt.xlabel(capacity_label)
-    plt.ylabel('Voltage vs Li/Li+ (V)')
-    plt.legend(frameon=False)
-    plt.tight_layout()
-    if save_png:
-        if png_filename == None:
-            png_filename = os.path.join(dir_name,'outputs','cycle.png')
-        plt.savefig(png_filename,dpi=300)
-    return fig, ax    
-
-def plot_eis(
-    dir_name,
-    fig=None,
-    ax=None,
-    cycles = 'all',
-    save_png = False,
-    png_filename = None,
-    plt_params = None,
-    seperate_im = False,
-    ):
-    if plt_params != None:
-        plt.rcParams.update(plt_params)
-    else:
-        plt.rcParams.update(default_params)    
-    csv_file = glob.glob(os.path.join(dir_name,'*EIS*.csv'))[0]
-    df = pd.read_csv(csv_file)
-    if cycles == 'all':
-        cycles = df['cycle number'].unique().tolist()
-    max_imaginary_impedance = df['-Im(Z)/Ohm'].max()
-    if fig == None and ax == None:
-        fig, ax = plt.subplots()
-    for i in range(1,int(df['cycle number'].max()+1)):
-        df1 = df[df['cycle number']==i]
-        if not seperate_im:
-            plt.plot(df1['Re(Z)/Ohm'],df1['-Im(Z)/Ohm'],label=f'{i}')
-        else:
-            offset = max_imaginary_impedance * (i-1) * 0.5
-            plt.plot(df1['Re(Z)/Ohm'],df1['-Im(Z)/Ohm']+offset,label=f'{i}')
-    plt.xlabel('Re(Z)/Ohm')
-    plt.ylabel('-Im(Z)/Ohm')
-    plt.tight_layout()
-    if save_png:
-        plt.savefig(png_filename,dpi=300)
-    return fig, ax
 
 # UTILITY FUNCTIONS
 
@@ -245,6 +84,7 @@ def plot_cycling(
         cycles='all',
         show_charge=True,
         show_discharge=True,
+        show_rest=True,
         labels=None,
         cont_colormap=['Blues','Reds'],
         reversed_colormap=True,
@@ -263,28 +103,83 @@ def plot_cycling(
     Plot voltage vs. capacity cycling data from one or more cells.
 
     Arguments:
-    - dfs (pandas.DataFrame or dict of pandas.DataFrame): dataframe(s) to plot, e.g. from parse_cycle_csv
-    - halfcycles (list, opt): halfcycles to plot, overrides cycles
+    - dfs (pandas.DataFrame or dict of pandas.DataFrame): dataframe(s) to plot, e.g. from parse_cycle_csv, keys in dict get used to automatically label legend
     - cycles (list): full cycles to plot, 'all' plots all cycles in df
-    - colormap: colormap to use for plot
+    - show_charge (bool): whether to plot charge half cycles
+    - show_discharge (bool): whether to plot discharge half cycles
+    - show_rest (bool): whether to plot rest portions
+    - labels (list of str): list of labels to override automatic labeling
+    - cont_colormap: continuous colormap (e.g. 'Blues') to use for plotting (gets used if no discrete_colormap is specified)
+    - discrete_colormap: discrete colormap (e.g. 'tab10') to use instead of continuous
+    - min_cycle (int): minimum cycle to use for colorbar
+    - max_cycle (int): maximum cycle to use for colorbar
     - capacity_col: column in dfs to plot as x-axis
     - voltage_col: column in dfs to plot as y-axis
     """
-
-    # TODO add functionality to turn on/off OCV plotting
-
+    # TODO: add functionality to connect OCV points with desired style of line
     if fig == None and ax == None:
         fig, ax = plt.subplots(**subplots_kwargs)
 
     multi_df_bool = isinstance(dfs, dict) and len(dfs) > 1
-    multi_cycle_bool = (isinstance(cycles, list) and len(cycles) > 1) or cycles == 'all'
+    multi_cycle_bool = (isinstance(cycles, (list, range)) and len(cycles) > 1) or cycles == 'all'
     
     if discrete_colormap: # If user specifies a discrete colormap
+        cmap = plt.get_cmap(discrete_colormap)
         # Check whether a valid number of things to plot are present
         if multi_df_bool and multi_cycle_bool:
             raise NotImplementedError("Discrete colormap can be used with multiple dfs or multiple cycles.")
-        cmap = plt.get_cmap(discrete_colormap)
+        elif multi_cycle_bool:
+            df = dfs.values[0] if isinstance(dfs, dict) else dfs
+            if not show_rest:
+                df = df.loc[df['state'] != 0] # Drop rest data points
+            if cycles == 'all':
+                cyc = df['full cycle'].unique()
+            elif isinstance(cycles, (list, range)):
+                cyc = cycles
+            else:
+                cyc = [cycles] # Ensure that cycles is a list, even if an int is passed
+            custom_lines = [Line2D([0], [0], color=cmap(i), lw=2) for i, _ in enumerate(cyc)]
+            if not labels: # Automatically set labels based on cycle numbers if none are provided
+                labels = [f'Cycle {c}' for c in cycles]
+            ax.legend(custom_lines, labels, **legend_kwargs)
+            for i, c in enumerate(cycles):
+                cha_hc, dis_hc = halfcycles_from_cycle(df, c)
+                if not labels:
+                    label = f'Cycle {c}' # Automatically set labels based on cycle numbers if none are provided
+                else:
+                    label = labels[i]
+                if show_charge and cha_hc: # If show_charge is True and the half cycle exists
+                    cha_mask = (df['half cycle'] == cha_hc)
+                    cha_df = df.loc[cha_mask]
+                    ax.plot(cha_df[capacity_col], cha_df[voltage_col], color=cmap(i), **plot_kwargs)
+                if show_discharge and dis_hc:
+                    dis_mask = (df['half cycle'] == dis_hc)
+                    dis_df = df.loc[dis_mask]
+                    ax.plot(dis_df[capacity_col], dis_df[voltage_col], color=cmap(i), **plot_kwargs)
+        # Plot one cycle for one or multiple dfs
+        else:
+            c = cycles[0] if isinstance(cycles, (list, range)) else cycles
+            dfs = dfs if isinstance(dfs, dict) else {'_': dfs} # Ensure that dfs is a dict, even if a dataframe is passed
+            custom_lines = [Line2D([0], [0], color=cmap(i), lw=2) for i, _ in enumerate(dfs)]
+            if not labels: # Automatically set labels based on dict keys if none are provided
+                labels = list(dfs.keys())
+            ax.legend(custom_lines, labels, **legend_kwargs)
+            for i, df in enumerate(dfs.values()):
+                if not show_rest:
+                    df = df.loc[df['state'] != 0] # Drop rest data points
+                cha_hc, dis_hc = halfcycles_from_cycle(df, c)
+                if show_charge and cha_hc: # If show_charge is True and the half cycle exists
+                    cha_mask = (df['half cycle'] == cha_hc)
+                    cha_df = df.loc[cha_mask]
+                    ax.plot(cha_df[capacity_col], cha_df[voltage_col], color=cmap(i), **plot_kwargs)
+                if show_discharge and dis_hc:
+                    dis_mask = (df['half cycle'] == dis_hc)
+                    dis_df = df.loc[dis_mask]
+                    ax.plot(dis_df[capacity_col], dis_df[voltage_col], color=cmap(i), **plot_kwargs)
+
     else: # Use continuous colormaps
+        # Make sure that cont_colormap is in the format of a list
+        cont_colormap = cont_colormap if isinstance(cont_colormap, list) else [cont_colormap]
         # Make a list of colormaps so that each df can be given a different colormap
         if reversed_colormap:
             cmaps = [plt.get_cmap(c).reversed() for c in cont_colormap]
@@ -293,55 +188,37 @@ def plot_cycling(
         
         df_list = dfs.values() if isinstance(dfs, dict) else [dfs] # Make dfs into list, even if only one is passed
         for i, df in enumerate(df_list):
+            if not show_rest:
+                df = df.loc[df['state'] != 0] # Drop rest data points
             if cycles == 'all':
                 cyc = df['full cycle'].unique()
-            elif isinstance(cycles, list):
+            elif isinstance(cycles, (list, range)):
                 cyc = cycles
             else:
                 cyc = [cycles] # Ensure that cycles is a list, even if an int is passed
+            cmap = cmaps[i % len(cmaps)] # Modulo used to loop through specified colormaps
             # Calculate min and max cycle count automatically for color mapping, unless specified
             vmin = min_cycle if min_cycle else int(min(cyc))
             vmax = max_cycle if max_cycle else int(max(cyc))
             norm = Normalize(vmin=vmin, vmax=vmax)
-            smap = plt.cm.ScalarMappable(cmap=cmaps[i], norm=norm)
-            cbar = fig.colorbar(smap, ax=plt.gca()) # TODO only integers should be labeled
+            smap = plt.cm.ScalarMappable(cmap=cmap, norm=norm) 
+            cbar = fig.colorbar(smap, ax=plt.gca(), **legend_kwargs) # TODO only integers should be labeled
             cbar.set_label('Cycle', rotation=270, labelpad=20)
             for c in cyc:
                 cha_hc, dis_hc = halfcycles_from_cycle(df, c)
                 if show_charge and cha_hc: # If show_charge is True and the half cycle exists
                     cha_mask = (df['half cycle'] == cha_hc)
                     cha_df = df.loc[cha_mask]
-                    ax.plot(cha_df[capacity_col], cha_df[voltage_col], color=cmaps[i](norm(c)), **plot_kwargs)
+                    ax.plot(cha_df[capacity_col], cha_df[voltage_col], color=cmap(norm(c)), **plot_kwargs)
                 if show_discharge and dis_hc:
                     dis_mask = (df['half cycle'] == dis_hc)
                     dis_df = df.loc[dis_mask]
-                    ax.plot(dis_df[capacity_col], dis_df[voltage_col], color=cmaps[i](norm(c)), **plot_kwargs)
-
-    # # Plot one cycle for one or multiple dfs
-    # else:
-    #     cycle = cycles[0] if isinstance(cycles, list) else cycles
-    #     dfs = dfs if isinstance(dfs, dict) else {'_': dfs} # Ensure that dfs is a dict, even if a dataframe is passed
-    #     cm = colormap_picker(len(dfs))
-    #     custom_lines = [Line2D([0], [0], color=cm(i), lw=2) for i, _ in enumerate(dfs)]
-    #     if not labels: # Automatically set labels based on dict keys if none are provided
-    #         labels = list(dfs.keys())
-    #     for i, df in enumerate(dfs.values()):
-    #         halfcycles = halfcycles_from_cycle(df, cycle)
-    #         for halfcycle in halfcycles:
-    #             mask = df['half cycle'] == halfcycle
-    #             df1 = df.loc[mask]
-    #             # Remove points from OCV at the beginning of the half cycle
-    #             df1 = df1.loc[df1['Capacity'] != 0]
-    #             # Make sure half cycle exists within the data
-    #             if sum(mask) > 0:
-    #                 ax.plot(df1[capacity_col], df1[voltage_col], color=cm(i), label=labels[i], **plot_kwargs)
-
+                    ax.plot(dis_df[capacity_col], dis_df[voltage_col], color=cmap(norm(c)), **plot_kwargs)
     try:
         capacity_label = capacity_col_to_label[capacity_col]
     except KeyError:
         capacity_label = capacity_col
-    ax.set_xlabel(capacity_label)
-    
+    ax.set_xlabel(capacity_label)   
     if voltage_col == 'Voltage':
         voltage_label = 'Voltage (V)'
     else:
@@ -350,111 +227,6 @@ def plot_cycling(
 
     return fig, ax
 
-# def plot_cycling(
-#         dfs,
-#         cycles='all',
-#         labels=None,
-#         colormap='Blues',
-#         capacity_col='Specific Capacity Total AM',
-#         voltage_col='Voltage',
-#         fig=None,
-#         ax=None,
-#         subplots_kwargs={},
-#         plot_kwargs={},
-#         legend_kwargs={}
-#     ):
-#     """
-#     Plot voltage vs. capacity cycling data from one or more cells.
-
-#     Arguments:
-#     - dfs (pandas.DataFrame or dict of pandas.DataFrame): dataframe(s) to plot, e.g. from parse_cycle_csv
-#     - halfcycles (list, opt): halfcycles to plot, overrides cycles
-#     - cycles (list): full cycles to plot, 'all' plots all cycles in df
-#     - colormap: colormap to use for plot
-#     - capacity_col: column in dfs to plot as x-axis
-#     - voltage_col: column in dfs to plot as y-axis
-#     """
-
-#     # TODO add functionality to select specific half cycles
-#     # TODO add functionality to turn on/off OCV plotting
-#     # TODO switch to continuous colormap support
-
-#     if fig == None and ax == None:
-#         fig, ax = plt.subplots(**subplots_kwargs)
-    
-#     def colormap_picker(number_of_plots):
-#         if not colormap:
-#             if number_of_plots <= 10:
-#                 return plt.get_cmap('tab10')
-#             elif number_of_plots <= 20:
-#                 return plt.get_cmap('tab20')
-#             else:
-#                 raise ValueError("Too many plots for default colormaps.")
-#         else:
-#             return plt.get_cmap(colormap)
-
-#     # Function can handle either multiple dfs or multiple cycles
-#     multi_df_bool = isinstance(dfs, dict) and len(dfs) > 1
-#     multi_cycle_bool = (isinstance(cycles, list) and len(cycles) > 1) or cycles == 'all'
-#     if multi_df_bool and multi_cycle_bool:
-#         raise NotImplementedError("Either multiple cells or multiple cycles may be plotted.")
-    
-#     # Plot multiple cycles for one df
-#     elif multi_cycle_bool:
-#         df = dfs.values[0] if isinstance(dfs, dict) else dfs
-#         if cycles == 'all':
-#             cycles = df['full cycle'].unique()
-#         else:
-#             cycles = list(cycles) # Ensure that cycles is a list, even if an int is passed
-#         cm = plt.get_cmap(colormap)
-#         custom_lines = [Line2D([0], [0], color=cm(i), lw=2) for i, _ in enumerate(cycles)]
-#         if not labels: # Automatically set labels based on cycle numbers if none are provided
-#             labels = [f'Cycle {n}' for n in cycles]
-#         for i, cycle in enumerate(cycles):
-#             halfcycles = halfcycles_from_cycle(df, cycle)
-#             for halfcycle in halfcycles:
-#                 mask = df['half cycle'] == halfcycle
-#                 df1 = df.loc[mask]
-#                 # Remove points from OCV at the beginning of the half cycle
-#                 df1 = df1.loc[df1['Capacity']!=0]
-#                 # Make sure half cycle exists within the data
-#                 if sum(mask) > 0:
-#                     ax.plot(df1[capacity_col], df1[voltage_col], color=cm(i), label=labels[i], **plot_kwargs)
-
-#     # Plot one cycle for one or multiple dfs
-#     else:
-#         cycle = cycles[0] if isinstance(cycles, list) else cycles
-#         dfs = dfs if isinstance(dfs, dict) else {'_': dfs} # Ensure that dfs is a dict, even if a dataframe is passed
-#         cm = colormap_picker(len(dfs))
-#         custom_lines = [Line2D([0], [0], color=cm(i), lw=2) for i, _ in enumerate(dfs)]
-#         if not labels: # Automatically set labels based on dict keys if none are provided
-#             labels = list(dfs.keys())
-#         for i, df in enumerate(dfs.values()):
-#             halfcycles = halfcycles_from_cycle(df, cycle)
-#             for halfcycle in halfcycles:
-#                 mask = df['half cycle'] == halfcycle
-#                 df1 = df.loc[mask]
-#                 # Remove points from OCV at the beginning of the half cycle
-#                 df1 = df1.loc[df1['Capacity'] != 0]
-#                 # Make sure half cycle exists within the data
-#                 if sum(mask) > 0:
-#                     ax.plot(df1[capacity_col], df1[voltage_col], color=cm(i), label=labels[i], **plot_kwargs)
-
-#     try:
-#         capacity_label = capacity_col_to_label[capacity_col]
-#     except KeyError:
-#         capacity_label = capacity_col
-#     ax.set_xlabel(capacity_label)
-    
-#     if voltage_col == 'Voltage':
-#         voltage_label = 'Voltage (V)'
-#     else:
-#         voltage_label = f'{voltage_col} (V)'
-#     ax.set_ylabel(voltage_label)
-    
-#     if labels:
-#         ax.legend(custom_lines, labels, **legend_kwargs)
-#     return fig, ax
 
 def plot_dqdv(
         dfs,
@@ -498,7 +270,7 @@ def plot_dqdv(
     Returns:
         fig: The matplotlib figure object.
         ax: The matplotlib axes object.
-
+    TODO: make consistent with plot_cycling
     """
     if fig == None and ax == None:
         fig, ax = plt.subplots(**subplots_kwargs)
@@ -606,233 +378,37 @@ def plot_dqdv(
     return fig, ax
 
 
-def plot_cycling_plotly(dfs, cycles='all', labels=None, colormap=None,
-                        capacity_col='Specific Capacity Total AM',
-                        voltage_col='Voltage', halfcycles_from_cycle=None):
-    """
-    Create an interactive Plotly figure to display voltage vs. capacity cycling data.
-    
-    Parameters:
-      dfs (pandas.DataFrame or dict): DataFrame(s) to plot.
-      cycles (list or 'all'): Which full cycles to include.
-      labels (list): Optional labels for each cycle.
-      colormap (str): Name of a Plotly color sequence; if None, defaults are used.
-      capacity_col (str): Column for capacity data.
-      voltage_col (str): Column for voltage data.
-      halfcycles_from_cycle (function): A function that takes (df, cycle) and returns a list
-                                        of half cycle identifiers.
-      
-    Returns:
-      fig: A Plotly Figure with an update menu to select cycles.
-    """
-    import plotly.graph_objects as go
-    import plotly.express as px
-
-    # Use the DataFrame from the dict if needed
-    if isinstance(dfs, dict):
-        df = list(dfs.values())[0]
+def plot_eis(
+    dir_name,
+    fig=None,
+    ax=None,
+    cycles = 'all',
+    save_png = False,
+    png_filename = None,
+    plt_params = None,
+    seperate_im = False,
+    ):
+    if plt_params != None:
+        plt.rcParams.update(plt_params)
     else:
-        df = dfs
-
-    # Determine cycles to plot
+        plt.rcParams.update(default_params)    
+    csv_file = glob.glob(os.path.join(dir_name,'*EIS*.csv'))[0]
+    df = pd.read_csv(csv_file)
     if cycles == 'all':
-        cycles = sorted(df['full cycle'].unique())
-    else:
-        cycles = list(cycles)
-    
-    # Default labels if none provided
-    if not labels:
-        labels = [f'Cycle {c}' for c in cycles]
-    
-    # Pick colors: use Plotly's default qualitative colors
-    default_colors = px.colors.qualitative.Plotly
-    n_colors = len(default_colors)
-    colors = [default_colors[i % n_colors] for i in range(len(cycles))]
-    
-    fig = go.Figure()
-    
-    # Dictionary to store which trace indices belong to which cycle.
-    visibility_dict = {}
-    trace_idx = 0
-    
-    for cycle_idx, cycle in enumerate(cycles):
-        # Get the halfcycles for the given cycle.
-        if halfcycles_from_cycle is not None:
-            halfcycles = halfcycles_from_cycle(df, cycle)
+        cycles = df['cycle number'].unique().tolist()
+    max_imaginary_impedance = df['-Im(Z)/Ohm'].max()
+    if fig == None and ax == None:
+        fig, ax = plt.subplots()
+    for i in range(1,int(df['cycle number'].max()+1)):
+        df1 = df[df['cycle number']==i]
+        if not seperate_im:
+            plt.plot(df1['Re(Z)/Ohm'],df1['-Im(Z)/Ohm'],label=f'{i}')
         else:
-            # If no helper is provided, assume one trace per cycle.
-            halfcycles = [cycle]
-        
-        # Save indices for current cycle.
-        visibility_dict[cycle] = []
-        for halfcycle in halfcycles:
-            # Select the rows corresponding to the half cycle
-            mask = df['half cycle'] == halfcycle
-            df1 = df.loc[mask]
-            # Remove points with zero capacity
-            df1 = df1.loc[df1['Capacity'] != 0]
-            if df1.empty:
-                continue
-            # Add a trace for this half cycle
-            fig.add_trace(go.Scatter(
-                x=df1[capacity_col],
-                y=df1[voltage_col],
-                mode='lines+markers',
-                name=f'Cycle {cycle}, Half {halfcycle}',
-                line=dict(color=colors[cycle_idx])
-            ))
-            visibility_dict[cycle].append(trace_idx)
-            trace_idx += 1
-    
-    # Create buttons for update menus.
-    # Each button will set visible only the traces for one cycle.
-    buttons = []
-    for cycle in cycles:
-        visible = [False] * len(fig.data)
-        for idx in visibility_dict.get(cycle, []):
-            visible[idx] = True
-        buttons.append(dict(
-            label=f'Cycle {cycle}',
-            method='update',
-            args=[{'visible': visible},
-                  {'title': f'Cycle {cycle} Data'}]
-        ))
-    
-    # Add an "All" button to show all traces
-    visible_all = [True] * len(fig.data)
-    buttons.insert(0, dict(
-        label='All',
-        method='update',
-        args=[{'visible': visible_all},
-              {'title': 'All Cycles'}]
-    ))
-    
-    fig.update_layout(
-        updatemenus=[dict(
-            active=0,
-            buttons=buttons,
-            x=1.1,
-            y=1.15,
-            xanchor='right',
-            yanchor='top'
-        )],
-        xaxis_title=capacity_col,
-        yaxis_title=voltage_col,
-        title="Cycling Data"
-    )
-    
-    return fig
-
-
-
-# PLOTTING
-# TODO move these to plot.py
-def multi_cycle_plot(df, cycles, colormap='viridis', norm=None):
-    """
-    Function for plotting continuously coloured cycles (useful for large numbers).
-
-    Parameters:
-        df (DataFrame): The input DataFrame containing the data to be plotted.
-        cycles (list or array-like): A list of full cycle numbers to be plotted.
-        colormap (str, optional): The name of the colormap to be used for coloring the cycles. Default is 'viridis'.
-        norm (str, optional): Normalization by 'area' or 'mass', if desired.
-
-    Returns:
-        fig (matplotlib.figure.Figure): The generated figure object.
-        ax (matplotlib.axes.Axes): The generated axes object.
-    """
-
-    import matplotlib.pyplot as plt
-    import matplotlib.cm as cm
-    from matplotlib.colors import Normalize
-    import numpy as np
-
-    # Determine type of capacity to plot, based on value of arg norm
-    if norm is None:
-        capacity_col = 'Capacity'
-        capacity_label = 'Capacity / mAh'
-    elif norm == 'area' and 'Areal Capacity' in df.columns:
-        capacity_col = 'Areal Capacity'
-        capacity_label = 'Areal Capacity / mAh/cm$^2$'
-    elif norm == 'mass' and 'Specific Capacity' in df.columns:
-        capacity_col = 'Specific Capacity'
-        capacity_label = 'Specific Capacity / mAh/g'
-    else:
-        print("Invalid argument for norm or required column not present in df.")
-
-    fig, ax = plt.subplots()
-    cm = plt.get_cmap(colormap)
-    norm = Normalize(vmin=int(min(cycles)), vmax=int(max(cycles)))
-    sm = plt.cm.ScalarMappable(cmap=cm, norm=norm)
-
-    for cycle in cycles:
-        halfcycles = halfcycles_from_cycle(df, cycle)
-        for halfcycle in halfcycles:
-            mask = (df['half cycle'] == halfcycle)
-            ax.plot(df.loc[mask][capacity_col], df.loc[mask]['Voltage'], color=cm(norm(cycle)))
-
-    cbar = fig.colorbar(sm, ax=plt.gca())
-    cbar.set_label('Cycle', rotation=270, labelpad=10)
-    ax.set_ylabel('Voltage / V')
-    ax.set_xlabel(capacity_label)
-    return fig, ax
-
-def multi_dqdv_plot(df, cycles, colormap='viridis', 
-    capacity_label='Capacity', 
-    voltage_label='Voltage',
-    polynomial_spline=3, s_spline=1e-5,
-    polyorder_1 = 5, window_size_1=101,
-    polyorder_2 = 5, window_size_2=1001,
-    final_smooth=True):
-    """
-    Plot multiple dQ/dV cycles on the same plot with a colormap.
-    Uses the internal dqdv_single_cycle function to calculate the dQ/dV curves.
-
-    Parameters:
-        df: DataFrame containing the data.
-        cycles: List or array-like object of cycle numbers to plot.
-        colormap: Name of the colormap to use (default: 'viridis').
-        capacity_label: Label of the capacity column in the DataFrame (default: 'Capacity').
-        voltage_label: Label of the voltage column in the DataFrame (default: 'Voltage').
-        polynomial_spline (int, optional): Order of the spline interpolation for the capacity-voltage curve. Defaults to 3. Best results use odd numbers.
-        s_spline (float, optional): Smoothing factor for the spline interpolation. Defaults to 1e-5.
-        polyorder_1 (int, optional): Order of the polynomial for the first smoothing filter (Before spline fitting). Defaults to 5. Best results use odd numbers.
-        window_size_1 (int, optional): Size of the window for the first smoothing filter. (Before spline fitting). Defaults to 101. Must be odd.
-        polyorder_2 (int, optional): Order of the polynomial for the second optional smoothing filter. Defaults to 5. (After spline fitting and differentiation). Best results use odd numbers.
-        window_size_2 (int, optional): Size of the window for the second optional smoothing filter. Defaults to 1001. (After spline fitting and differentiation). Must be odd.
-        final_smooth (bool, optional): Whether to apply final smoothing to the dq/dv curve. Defaults to True.
-
-    Returns:
-        fig: The matplotlib figure object.
-        ax: The matplotlib axes object.
-
-    """
-    import matplotlib.pyplot as plt
-    import matplotlib.cm as cm
-    from matplotlib.colors import Normalize
-
-    fig, ax = plt.subplots() 
-    cm = plt.get_cmap(colormap)
-    norm = Normalize(vmin=int(min(cycles)), vmax=int(max(cycles)))
-    sm = plt.cm.ScalarMappable(cmap=cm, norm=norm)
-
-    for cycle in cycles:
-        halfcycles = halfcycles_from_cycle(df, cycle)
-        for halfcycle in halfcycles:
-            df_cycle = df[df['half cycle'] == halfcycle]
-            voltage, dqdv, _ = dqdv_single_cycle(df_cycle[capacity_label],
-                                        df_cycle[voltage_label], 
-                                        window_size_1=window_size_1,
-                                        polyorder_1=polyorder_1,
-                                        polynomial_spline=polynomial_spline,
-                                        s_spline=s_spline,
-                                        window_size_2=window_size_2,
-                                        polyorder_2=polyorder_2,
-                                        final_smooth=final_smooth)
-            ax.plot(voltage, dqdv, color=cm(norm(cycle)))
-
-    cbar = fig.colorbar(sm, ax=plt.gca())
-    cbar.set_label('Cycle', rotation=270, labelpad=10)
-    ax.set_xlabel('Voltage / V')
-    ax.set_ylabel('dQ/dV / mAhV$^{-1}$')
+            offset = max_imaginary_impedance * (i-1) * 0.5
+            plt.plot(df1['Re(Z)/Ohm'],df1['-Im(Z)/Ohm']+offset,label=f'{i}')
+    plt.xlabel('Re(Z)/Ohm')
+    plt.ylabel('-Im(Z)/Ohm')
+    plt.tight_layout()
+    if save_png:
+        plt.savefig(png_filename,dpi=300)
     return fig, ax
