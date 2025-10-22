@@ -94,7 +94,7 @@ def voltage_vs_capacity_cycling(df,cycles=None,plot=False):
                 ax.plot(specific_capacity_discharge_formation,voltage_discharge_formation,label=f'Cycle {formation_cycle} Discharge')
                 ax.plot(specific_capacity_rest_end_formation,voltage_rest_end_formation,label=f'Cycle {formation_cycle} Rest')
     for i, cycle_i in enumerate(cycles):
-        print(f'Processing cycle {cycle_i}...')
+        # print(f'Processing cycle {cycle_i}...')
         # time= df['time/s'][df['full cycle'] == cycle_i]
         # time_0 = time.iloc[0]
         df_i = df[df['full cycle'] == cycle_i]
@@ -164,7 +164,7 @@ def voltage_vs_capacity_cycling(df,cycles=None,plot=False):
         time_charge_rest = df_charge_resting[time_col_name]
         specific_capacity_discharge = df_discharge_running['Specific Capacity Total AM']
         specific_capacity_discharge_rest = df_discharge_resting['Specific Capacity Total AM'].copy()
-        specific_power_discharge = df_discharge_running['Specific Power Total AM']
+        specific_power_discharge = df_discharge_running['Specific Power Total AM'].copy()
         specific_power_charge = df_charge_running['Specific Power Total AM']
         if len(specific_capacity_discharge_rest) == 0:
             # create an empty dataframe

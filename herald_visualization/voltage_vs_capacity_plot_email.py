@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import glob, os, re
 import argparse
+import shutil
 
 # import herald_visualization.echem as ec
 # from herald_visualization.mpr2csv import cycle_mpr2csv
@@ -12,8 +13,8 @@ from herald_visualization.fancy_plot import (
     voltage_vs_capacity_cycling,
     plot_multiple_voltage_vs_cycling,
 )
-from herald_visualization.celldesignroutine import cellmodel_IL_pouch_final
 from ruamel.yaml import YAML
+from scipy.optimize import curve_fit
 
 default_params = {
     # 'font.family': 'Helvetica',
@@ -556,6 +557,107 @@ def save_small_df(output_dict):
     )
     df_out.to_csv('123H_discharge.csv',index=False)    
 
+def fit_2rc(t, V, current):
+    def rc_func(t, RC1, V1, RC2, V2, Vocv):
+        return Vocv - V1 * np.exp(-t / RC1) - V2 * np.exp(-t / RC2)
+    # initial guess for R, C, V0
+    V1_guess = 0.8
+    RC1_guess = 300
+    V2_guess = 0.4
+    RC2_guess = 30
+    Vocv_guess = 2.0
+    t = t - t.min()
+    Rint = -(V[1]-V[0]) / current[0] * 1000
+    popt, pcov = curve_fit(rc_func, t[1:], V[1:], p0=[RC1_guess, V1_guess, RC2_guess, V2_guess, Vocv_guess], maxfev=10000)
+    RC1_fit, V1_fit, RC2_fit, V2_fit, Vocv_fit = popt
+    R1 = -V1_fit / current[0] * 1000
+    C1 = RC1_fit / R1
+    R2 = -V2_fit / current[0] * 1000
+    C2 = RC2_fit / R2
+    rmse = np.sqrt(np.mean((V - rc_func(t, *popt))**2))
+    return Rint, R1, C1, R2, C2, Vocv_fit, rmse
+
+
+def gen_summary_df(output_dict, cell_id, cycles=None):
+    summary_csv = os.path.join('/'.join(id_to_path(cell_id).split('/')[:-1]),'cycle_summary.csv')
+    summary_df = pd.read_csv(summary_csv)
+    summary_df = summary_df[['cycle','CE','Discharge Overpotential','Charge Overpotential',]]
+    if not cycles:
+        cycles = output_dict['cycle_lst']
+    df = pd.read_csv(id_to_path(cell_id))
+    summary_df['Discharge Rint (Ohm)'] = np.zeros(len(summary_df))
+    summary_df['Discharge R1 (Ohm)'] = np.zeros(len(summary_df))
+    summary_df['Discharge C1 (F)'] = np.zeros(len(summary_df))
+    summary_df['Discharge R2 (Ohm)'] = np.zeros(len(summary_df))
+    summary_df['Discharge C2 (F)'] = np.zeros(len(summary_df))
+    summary_df['Discharge Vocv (V)'] = np.zeros(len(summary_df))
+    summary_df['Discharge RMSE (V)'] = np.zeros(len(summary_df))
+    summary_df['Charge Rint (Ohm)'] = np.zeros(len(summary_df))
+    summary_df['Charge R1 (Ohm)'] = np.zeros(len(summary_df))
+    summary_df['Charge C1 (F)'] = np.zeros(len(summary_df))
+    summary_df['Charge R2 (Ohm)'] = np.zeros(len(summary_df))
+    summary_df['Charge C2 (F)'] = np.zeros(len(summary_df))
+    summary_df['Charge Vocv (V)'] = np.zeros(len(summary_df))
+    summary_df['Charge RMSE (V)'] = np.zeros(len(summary_df))
+    ############# fit 2rc model to each cycle #############
+    for i, cycle in enumerate(cycles[1:]):
+        df1 = df[df['full cycle']==cycle].copy()
+        half_cycles = df1['half cycle'].unique().tolist()
+        for half_cycle in half_cycles:
+            df2 = df1[df1['half cycle']==half_cycle].copy()
+            df2.reset_index(drop=True, inplace=True)
+            rest_idx = df2.index[df2['state']==0].tolist()[0]
+            df2 = df2.iloc[rest_idx-1:]
+            if half_cycle % 2 == 1:
+                t = df2['Time'].to_numpy()
+                t = t - t.min()
+                V = df2['Voltage'].to_numpy()
+                I = df2['Current'].to_numpy()
+                Rint, R1, C1, R2, C2, Vocv, rmse = fit_2rc(t, V, I)
+                summary_df.loc[summary_df['cycle']==cycle, 'Discharge Rint (Ohm)'] = Rint
+                summary_df.loc[summary_df['cycle']==cycle, 'Discharge R1 (Ohm)'] = R1
+                summary_df.loc[summary_df['cycle']==cycle, 'Discharge C1 (F)'] = C1
+                summary_df.loc[summary_df['cycle']==cycle, 'Discharge R2 (Ohm)'] = R2
+                summary_df.loc[summary_df['cycle']==cycle, 'Discharge C2 (F)'] = C2
+                summary_df.loc[summary_df['cycle']==cycle, 'Discharge Vocv (V)'] = Vocv
+                summary_df.loc[summary_df['cycle']==cycle, 'Discharge RMSE (V)'] = rmse
+            else:
+                t = df2['Time'].to_numpy()
+                V = df2['Voltage'].to_numpy()
+                I = df2['Current'].to_numpy()
+                Rint, R1, C1, R2, C2, Vocv, rmse = fit_2rc(t, V, I)
+                summary_df.loc[summary_df['cycle']==cycle, 'Charge Rint (Ohm)'] = Rint
+                summary_df.loc[summary_df['cycle']==cycle, 'Charge R1 (Ohm)'] = R1
+                summary_df.loc[summary_df['cycle']==cycle, 'Charge C1 (F)'] = C1
+                summary_df.loc[summary_df['cycle']==cycle, 'Charge R2 (Ohm)'] = R2
+                summary_df.loc[summary_df['cycle']==cycle, 'Charge C2 (F)'] = C2
+                summary_df.loc[summary_df['cycle']==cycle, 'Charge Vocv (V)'] = Vocv
+                summary_df.loc[summary_df['cycle']==cycle, 'Charge RMSE (V)'] = rmse
+    return summary_df
+
+
+def chemistry_se(output_dict, cell_id):
+    (discharge_se_lst_cell_id_1,
+    discharge_sc_lst_cell_id_1,
+    charge_se_lst_cell_id_1,
+    charge_sc_lst_cell_id_1,) = calc_se_cell(output_dict)
+    spec_df = pd.read_csv('/scratch/venkvis_root/venkvis/shared_data/herald/In-house cells and syntheses - cell-design-input.csv')
+    coeffs = {"70_3": 0.63,
+    "75_3": 0.67,
+    "80_3": 0.71,
+    "85_1": 0.77,
+    "85_2": 0.77,
+    "85_3": 0.76,
+    "85_5": 0.76,
+    "87_3": 0.77,
+    } # AM to chem coefficient
+    df1 = spec_df[spec_df['cell id']==cell_id].copy()
+    fef3_mass = int(df1['cathode FeF3 mass fraction'].values[0]*100)
+    binder_mass = int(df1['cathode binder mass fraction'].values[0]*100)
+    coeff = coeffs[f'{fef3_mass}_{binder_mass}']
+    discharge_se_lst_chem = discharge_se_lst_cell_id_1 * coeff
+    return discharge_se_lst_chem
+
 if __name__ == "__main__":
     
     from scipy.integrate import simpson
@@ -567,6 +669,18 @@ if __name__ == "__main__":
         "/scratch/venkvis_root/venkvis/shared_data/herald/hypo_testing.yaml", "r"
     ) as file:
         hypo_test_dict = yaml.load(file)
+    
+    with open('/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_chem_dict.yaml','r') as file:
+        hypo_se_chem_dict = yaml.load(file)
+    
+    with open('/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_am_dict.yaml', 'r') as file:
+        hypo_se_am_dict = yaml.load(file)
+    
+    with open('/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_sc_am_dict.yaml', 'r') as file:
+        hypo_sc_am_dict = yaml.load(file)
+    
+    with open('/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_vavg_am_dict.yaml', 'r') as file:
+        hypo_vavg_am_dict = yaml.load(file)
 
     for hypo in hypo_test_dict.keys():
         se_am_dict = {}
@@ -577,6 +691,7 @@ if __name__ == "__main__":
         fig2, ax2 = plt.subplots(1, 1, figsize=(6,6), dpi=100)
         fig3, ax3 = plt.subplots(1, 1, figsize=(6,6), dpi=100)
         fig4, ax4 = plt.subplots(1, 1, figsize=(6,6), dpi=100)
+        fig5, ax5 = plt.subplots(1, 1, figsize=(6,6), dpi=100)
         max_cell_id_1_cycles = 0
         colors = ['tab:blue','tab:red','tab:orange','tab:purple','tab:brown','tab:olive']*1000
         linestyles = [':','-.','--','-']*1000
@@ -591,108 +706,42 @@ if __name__ == "__main__":
                 f"Processing Cell ID: {cell_id} with spec {hypo_test_dict[hypo]['cell_ids_and_specs'][cell_id]}"
             )
             fig1, ax1 = plt.subplots(1, 1, figsize=(9, 6), dpi=100)
-            # try:
-            output_dict, fig1, ax1 = plot_voltage_vs_capacity_single_cell_with_overpotential(
-                cell_id, fig1, ax1
-            )
-            # except Exception as e:
-            #     print(f"Error processing cell ID {cell_id}: {e}")
-            #     continue
-            if fig1 is None or ax1 is None:
-                print(f"No data found for cell ID {cell_id}, skipping...")
-                continue
-            ax1.set_title(
-                f'Cell ID: {cell_id}, {hypo_test_dict[hypo]["cell_ids_and_specs"][cell_id]}'
-            )
-            ax1.set_xlim([-10, 650])
-            ax1.set_ylim([0.0, 4.5])
-            ax1_2 = ax1.twinx()
-            color = 'purple' # plt.get_cmap('Blues')(0.1)
-            ax1_2.set_ylabel('Areal Current (mA/cm$^2$)', color=color)  
-            ax1_2.tick_params(axis='y', colors=color)
-            ax1_2.spines['right'].set_color(color)
-            areal_current = -output_dict['areal_current_discharge_lst'][1]
-            sc = output_dict['specific_capacity_discharge_lst'][1]
-            areal_current = np.array(areal_current)
-            sc = np.array(sc)
-            ax1_2.plot(sc, areal_current, color=color, linestyle='--', linewidth=2, alpha=1.0)
-            ax1_2.set_ylim([0, 2.0])
+            png_file = f'/scratch/venkvis_root/venkvis/shared_data/herald/all_cycling_plots/{cell_id}_voltage_vs_capacity.png'
+            # if os.path.exists(png_file):
+            #     shutil.copy(png_file, save_folder)
+            discharge_se_lst_cell_id_1 = hypo_se_am_dict[cell_id]
+            discharge_se_lst_chem = hypo_se_chem_dict[cell_id]
+            discharge_sc_lst_cell_id_1 = hypo_sc_am_dict[cell_id]
+            avg_voltage_lst_cell_id_1 = hypo_vavg_am_dict[cell_id]
 
-            # Right axis #2: Power (create new twinx and offset its spine)
-            power = -output_dict['specific_power_discharge_lst'][1]
-            color = 'tab:orange'
-            ax1_3 = ax1.twinx()
-            ax1_3.spines["right"].set_position(("outward", 100))  # shift 60 pts away
-            ax1_3.plot(sc, power, color=color, linestyle="-.", label="Power")
-            ax1_3.set_ylabel("Power (W/kg-AM)", color=color)
-            ax1_3.tick_params(axis="y", colors=color)
-            ax1_3.spines['right'].set_color(color)
-            ax1_3.set_ylim([0, 2000])
-
-            # adjust colorbar position
-            for a in fig1.axes:
-                if a not in [ax1, ax1_2]:     # exclude your main axis
-                    # you can filter more specifically, e.g., by checking if it's a Colorbar
-                    cbar_ax = a
-                    break
-
-            # shift the colorbar to the right
-            pos = cbar_ax.get_position()
-            cbar_ax.set_position([pos.x0 + 0.3, pos.y0, pos.width, pos.height])            
-
-            fig1.savefig(
-                save_folder + f"{cell_id}_voltage_vs_capacity.png",
-                dpi=100,
-                bbox_inches="tight",
-            )
-            if output_dict is None:
-                continue
-            # calculate specific energy
-            (
-                discharge_se_lst_cell_id_1,
-                discharge_sc_lst_cell_id_1,
-                charge_se_lst_cell_id_1,
-                charge_sc_lst_cell_id_1,
-            ) = calc_se_cell(output_dict)
-
-            # # calculate energy retention
-            # fig, ax = plt.subplots(1, 1, figsize=(9, 6), dpi=100)
-            # fig, ax = plot_er_cell(
-            #     cell_id,
-            #     output_dict,
-            #     discharge_se_lst_cell_id_1,
-            #     fig,
-            #     ax,
-            #     save_folder=save_folder,
-            # )
-            # save_small_df(output_dict)
-
-            # calculate chem level energy density
-            discharge_se_lst_chem = []
-            # for i, se in enumerate(discharge_se_lst_cell_id_1):
-            #     chem_se, mass_dict = cell_design(se / 1000.0, cell_id=cell_id,print_results=False)
-            #     discharge_se_lst_chem.append(chem_se)
-                # if ii == 0:
-                    # print(f"Mass breakdown for {cell_id} at cycle {output_dict['cycle_lst'][i]}:")
-                    # print(mass_dict)
-            # discharge_se_lst_chem = np.array(discharge_se_lst_chem)
+            discharge_se_lst_chem = np.array(discharge_se_lst_chem)
             discharge_sc_lst_cell_id_1 = np.array(discharge_sc_lst_cell_id_1)
             avg_voltage_lst_cell_id_1 = discharge_se_lst_cell_id_1 / discharge_sc_lst_cell_id_1
-            se_am_dict[cell_id] = discharge_se_lst_cell_id_1.tolist()
-            sc_am_dict[cell_id] = discharge_sc_lst_cell_id_1.tolist()
-            print(f"Discharge SE for {cell_id}: {list(discharge_se_lst_cell_id_1)}")
-            print(f'Discharge SC for {cell_id}: {list(discharge_sc_lst_cell_id_1)}')
-            print(f'Average voltage for {cell_id}: {list(avg_voltage_lst_cell_id_1)}')
-            # print(f"Discharge SE Chem for {cell_id}: {list(discharge_se_lst_chem)}")
-            # plot discharge_se_lst_chem
+
             linestyle_idx = ord(cell_id[-1]) - ord('A')
             cell_id_family = int(cell_id[:-1])
             if cell_id_family > latest_cell_id:
                 color_idx += 1
                 marker_idx += 1
                 latest_cell_id = cell_id_family
+            if cell_id_family == 276: # 276 series have a lot of cells
+                color_marker_dict = {
+                    'A': [0,0],
+                    'B': [0,1],
+                    'C': [0,2],
+                    'D': [1,0],
+                    'E': [1,1],
+                    'F': [1,2],
+                    'G': [2,0],
+                    'H': [2,1],
+                    'I': [2,2],
+                    'J': [2,0],
+                    'K': [2,1],
+                    'L': [2,2],
+                }
+                color_idx, marker_idx = color_marker_dict[cell_id[-1]]
             ax2.plot(
-                output_dict["cycle_lst"][1:],
+                range(1, len(discharge_sc_lst_cell_id_1)),
                 discharge_sc_lst_cell_id_1[1:],
                 label=f"{cell_id}, {hypo_test_dict[hypo]['cell_ids_and_specs'][cell_id]}",
                 color=colors[color_idx],
@@ -703,8 +752,8 @@ if __name__ == "__main__":
                 alpha=0.8,
             )    
             ax3.plot(
-                output_dict["cycle_lst"][1:],
-                discharge_se_lst_cell_id_1[1:]/discharge_se_lst_cell_id_1[1]*100,
+                range(1, len(discharge_se_lst_chem)),
+                discharge_se_lst_chem[1:] / discharge_se_lst_chem[1] * 100,
                 label=f"{cell_id}, {hypo_test_dict[hypo]['cell_ids_and_specs'][cell_id]}",
                 color=colors[color_idx],
                 mec="k",
@@ -715,7 +764,7 @@ if __name__ == "__main__":
             )
 
             ax4.plot(
-                output_dict["cycle_lst"][1:],
+                range(1, len(discharge_se_lst_cell_id_1)),
                 discharge_se_lst_cell_id_1[1:],
                 label=f"{cell_id}, {hypo_test_dict[hypo]['cell_ids_and_specs'][cell_id]}",
                 color=colors[color_idx],
@@ -725,10 +774,29 @@ if __name__ == "__main__":
                 markersize=10,
                 alpha=0.8,        
             )        
-            if max(output_dict["cycle_lst"]) > max_cell_id_1_cycles:
-                max_cell_id_1_cycles = max(output_dict["cycle_lst"])
-                print(max_cell_id_1_cycles)
+            ax5.plot(
+                range(1, len(discharge_se_lst_chem)),
+                discharge_se_lst_chem[1:],
+                label=f"{cell_id}, {hypo_test_dict[hypo]['cell_ids_and_specs'][cell_id]}",
+                color=colors[color_idx],
+                mec="k",
+                linestyle=linestyles[linestyle_idx],
+                marker = markers[marker_idx],
+                markersize=10,
+                alpha=0.8,        
+            )
             plt.close(fig1)
+
+            # # # generate and save summary df
+            # # try:
+            # summary_df = gen_summary_df(output_dict, cell_id, cycles = [0,1])
+            # summary_df = summary_df.round(3)
+            # summary_df.to_csv(save_folder + f"{cell_id}_summary.csv", index=False)
+            # # except:
+            #     # print(f'cell id {cell_id} cannot generate summary df, skipping')
+            #     # continue
+
+
         ax2.set_xlabel("Cycle Number")
         # ax2.set_ylabel("Specific Energy (Wh/kg-AM)")
         ax2.set_ylabel('Specific Capacity (mAh/kg-AM)')
@@ -750,9 +818,9 @@ if __name__ == "__main__":
         )
         plt.close(fig2)
         ax3.set_xlabel("Cycle Number")
-        ax3.set_ylabel('Energy Retention (%)')
+        ax3.set_ylabel('Energy Retention (from cycle 1) (%)')
         ax3.set_xlim([0.5, 10.5])
-        ax3.set_ylim([80, 120])
+        ax3.set_ylim([80, 105])
         ax3.legend(
             loc="center left", bbox_to_anchor=(1, 0.5), frameon=False
         )
@@ -760,17 +828,17 @@ if __name__ == "__main__":
         # n_ticks = 5 if max_cell_id_1_cycles > 10 else max_cell_id_1_cycles
         # n_ticks = 10
         # ax3.set_xticks(np.linspace(1, max_cell_id_1_cycles, n_ticks).astype(int))
-        # ax3.set_xlim([0.5, 10.5])
+        ax3.set_xlim([0.5, 10.5])
         fig3.suptitle(f'Track {hypo}: {hypo_test_dict[hypo]["Track"]}')
         fig3.savefig(
-            save_folder + f"hypothesis_{hypo}_AM_er.png",
+            save_folder + f"hypothesis_{hypo}_chem_er.png",
             dpi=200,
             bbox_inches="tight",
         )      
         plt.close(fig3)  
         ax4.set_xlabel("Cycle Number")
         ax4.set_ylabel('Specific Energy (Wh/kg-AM)')
-        # ax4.set_ylim([0, 1100])
+        # ax4.set_ylim([600, 1300])
         # ax4.set_xlim([0, 5])
         ax4.legend(
             loc="center left", bbox_to_anchor=(1, 0.5), frameon=False
@@ -779,7 +847,7 @@ if __name__ == "__main__":
         # n_ticks = 5 if max_cell_id_1_cycles > 10 else max_cell_id_1_cycles
         n_ticks = 10
         # ax4.set_xticks(np.linspace(1, 70, max_cell_id_1_cycles).astype(int))
-        # ax4.set_xlim([0.5, 10.5])
+        ax4.set_xlim([0.5, 10.5])
         fig4.suptitle(f'Track {hypo}: {hypo_test_dict[hypo]["Track"]}')
         fig4.savefig(
             save_folder + f"hypothesis_{hypo}_AM_se.png",
@@ -787,6 +855,25 @@ if __name__ == "__main__":
             bbox_inches="tight",
         ) 
         plt.close(fig4)
+        ax5.set_xlabel("Cycle Number")
+        ax5.set_ylabel('Specific Energy (Wh/kg-Chem)')
+        ax5.set_ylim([600, 1000])
+        # ax5.set_xlim([0, 5])
+        ax5.legend(
+            loc="center left", bbox_to_anchor=(1, 0.5), frameon=False
+        )
+        max_cell_id_1_cycles = 10
+        # n_ticks = 5 if max_cell_id_1_cycles > 10 else max_cell_id_1_cycles
+        n_ticks = 10
+        # ax5.set_xticks(np.linspace(1, 70, max_cell_id_1_cycles).astype(int))
+        ax5.set_xlim([0.5, 10.5])
+        fig5.suptitle(f'Track {hypo}: {hypo_test_dict[hypo]["Track"]}')
+        fig5.savefig(
+            save_folder + f"hypothesis_{hypo}_chem_se.png",
+            dpi=200,
+            bbox_inches="tight",
+        )
+        plt.close(fig5)
 
     # yaml = YAML()
     # yaml.indent(mapping=2, sequence=4, offset=2)

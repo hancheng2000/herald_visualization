@@ -4,15 +4,14 @@ import pandas as pd
 import numpy as np
 import glob, os, re
 import argparse
-
-# import herald_visualization.echem as ec
+from scipy.optimize import curve_fit, least_squares
+import herald_visualization.echem as ec
 # from herald_visualization.mpr2csv import cycle_mpr2csv
 # from herald_visualization.plot import plot_cycling, plot_gitt, parse_cycle_csv, plot_cycling_plotly
 from herald_visualization.fancy_plot import (
     voltage_vs_capacity_cycling,
     plot_multiple_voltage_vs_cycling,
 )
-from herald_visualization.celldesignroutine import cellmodel_IL_pouch_final
 from ruamel.yaml import YAML
 
 default_params = {
@@ -272,34 +271,6 @@ def plot_voltage_vs_capacity_single_cell_with_overpotential(
         specific_capacity_discharge = np.array(specific_capacity_discharge)
         voltage_discharge = np.array(output_dict["voltage_discharge_lst"][i])
         areal_current = np.array(output_dict["areal_current_discharge_lst"][i])
-        # # power = np.array(output_dict['specific_power_discharge_lst'][i])
-        # # in the power profile, make sure the offset when changing power profile is accounted for
-        # noisy_indices = np.where(np.diff(specific_capacity_discharge) < -1)[0]
-        # while len(noisy_indices) > 1:
-        #     specific_capacity_discharge = specific_capacity_discharge[
-        #         [
-        #             j
-        #             for j in range(len(specific_capacity_discharge))
-        #             if j not in noisy_indices
-        #         ]
-        #     ]
-        #     voltage_discharge = voltage_discharge[
-        #         [j for j in range(len(voltage_discharge)) if j not in noisy_indices]
-        #     ]
-        #     areal_current = areal_current[
-        #         [j for j in range(len(areal_current)) if j not in noisy_indices]
-        #     ]
-        #     # power = power[
-        #     #     [j for j in range(len(power)) if j not in noisy_indices]
-        #     # ]
-        #     noisy_indices = np.where(np.diff(specific_capacity_discharge) < -1)[0]
-        # reset_indices = np.where(np.diff(specific_capacity_discharge) < -1)[0]
-        # # print('reset indices: ', reset_indices, specific_capacity_discharge[reset_indices])
-        # if len(reset_indices) != 0:
-        #     x_translation_value = specific_capacity_discharge[reset_indices[0]]
-        #     specific_capacity_discharge[reset_indices[0] + 1 :] = (
-        #         specific_capacity_discharge[reset_indices[0] + 1 :] + x_translation_value
-        #     )
         output_dict["voltage_discharge_lst"][i] = voltage_discharge
         output_dict["specific_capacity_discharge_lst"][i] = specific_capacity_discharge  
         output_dict["areal_current_discharge_lst"][i] = areal_current
@@ -385,6 +356,138 @@ def plot_voltage_vs_capacity_single_cell_with_overpotential(
     # add title
     return output_dict, fig, ax
 
+def plot_dqdv_single_cell(
+    cell_id,
+    fig,
+    ax,
+    max_cycle = 10,
+    min_cycle = 0,
+):
+    if fig is None or ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(9, 6), dpi=100)
+    if not os.path.exists(id_to_path(cell_id)) or id_to_path(cell_id) is None:
+        print(f"No data found for cell ID {cell_id}")
+        return None
+    df = pd.read_csv(id_to_path(cell_id))
+    print(id_to_path(cell_id))
+    df_in_house_cell_and_synthesis = pd.read_csv(
+        "/scratch/venkvis_root/venkvis/shared_data/herald/In-house cells and syntheses - Cells.csv"
+    )
+    df_in_house_cell_and_synthesis = df_in_house_cell_and_synthesis[
+        df_in_house_cell_and_synthesis["Test ID"] == cell_id
+    ]
+    unique_cycles = df["full cycle"].unique().astype(int).tolist()
+    cell_id_1_cycles = unique_cycles[:-1]
+    output_dict = voltage_vs_capacity_cycling(df, cycles=cell_id_1_cycles, plot=False)
+    if len(output_dict["cycle_lst"]) == 0:
+        print(f"No cycles found for {cell_id}")
+        return None, None, None
+    print('output cycle list: ', output_dict['cycle_lst'])
+    for i, cycle in enumerate(output_dict["cycle_lst"][:max_cycle+1]):    
+        if cycle > max_cycle:
+            continue
+        specific_capacity_discharge = output_dict["specific_capacity_discharge_lst"][i]
+        voltage_discharge = np.array(output_dict["voltage_discharge_lst"][i])
+        v_margin = 0.01
+        if len(voltage_discharge) == 0:
+            continue    
+        valid_idxs = (np.array(specific_capacity_discharge) > 0) & (voltage_discharge > (voltage_discharge.min() + v_margin)) & (voltage_discharge < (voltage_discharge.max() - v_margin))
+        specific_capacity_discharge = np.array(specific_capacity_discharge)[valid_idxs]
+        voltage_discharge = voltage_discharge[valid_idxs]
+        if len(voltage_discharge) == 0:
+            continue
+
+        # convert to dQ/dV
+        voltage_discharge, smooth_dqdv_discharge, smooth_cap_discharge = ec.dqdv_single_cycle(
+            np.array(specific_capacity_discharge), np.array(voltage_discharge),
+            polynomial_spline = 3, s_spline = 1e-5,
+            polyorder_1 = 5, window_size_1 = 101,
+            polyorder_2 = 5, window_size_2 = 1001,
+            final_smooth=True,
+        )
+        if cycle == 0:
+            continue
+            # fig, ax = plot_multiple_voltage_vs_cycling(
+            #     [np.array(smooth_dqdv_discharge)],
+            #     [np.array(voltage_discharge)],
+            #     [cycle],
+            #     linestyle="--",
+            #     color_customize=None,
+            #     fig=fig,
+            #     ax=ax,
+            #     colorbar=False,
+            #     min_cycle=min_cycle,
+            #     max_cycle=max_cycle,
+            # )
+        else:
+            fig, ax = plot_multiple_voltage_vs_cycling(
+                [np.array(smooth_dqdv_discharge)],
+                [np.array(voltage_discharge)],
+                [cycle],
+                linestyle="-",
+                color_customize=None,
+                fig=fig,
+                ax=ax,
+                colorbar=False,
+                min_cycle=min_cycle,
+                max_cycle=max_cycle,
+            )
+
+        # charge
+        specific_capacity_charge = output_dict["specific_capacity_charge_lst"][i]
+        specific_capacity_charge = np.array(specific_capacity_charge)
+        voltage_charge = output_dict["voltage_charge_lst"][i]
+        voltage_charge = np.array(voltage_charge)
+        if len(voltage_charge) == 0:
+            continue
+        valid_idxs = (np.array(specific_capacity_charge) > 0) & (voltage_charge > (voltage_charge.min() + v_margin)) & (voltage_charge < (voltage_charge.max() - v_margin))
+        specific_capacity_charge = specific_capacity_charge[valid_idxs]
+        voltage_charge = voltage_charge[valid_idxs]
+        if len(voltage_charge) == 0:
+            continue
+
+        voltage_charge, smooth_dqdv_charge, smooth_cap_charge = ec.dqdv_single_cycle(
+            np.array(specific_capacity_charge), np.array(voltage_charge),
+            polynomial_spline = 3, s_spline = 1e-5,
+            polyorder_1 = 5, window_size_1 = 101,
+            polyorder_2 = 5, window_size_2 = 1001,
+            final_smooth=True,
+        )
+
+        if cycle == max(output_dict["cycle_lst"][:max_cycle+1]) or cycle== max_cycle:
+            fig, ax = plot_multiple_voltage_vs_cycling(
+                [np.array(smooth_dqdv_charge)],
+                [np.array(voltage_charge)],
+                [cycle],
+                linestyle="-",
+                color_customize=None,
+                fig=fig,
+                ax=ax,
+                colorbar=True,
+                min_cycle=min_cycle,
+                max_cycle=max_cycle,
+            )
+        elif cycle != 0:
+            fig, ax = plot_multiple_voltage_vs_cycling(
+                [np.array(smooth_dqdv_charge)],
+                [np.array(voltage_charge)],
+                [cycle],
+                linestyle="-",
+                color_customize=None,
+                fig=fig,
+                ax=ax,
+                colorbar=False,
+                min_cycle=min_cycle,
+                max_cycle=max_cycle,
+            )      
+    ax.set_xlim([1.0, 4.0])
+    ax.set_xlabel("Voltage (V)")
+    ax.set_ylabel('dQ/dV (mAh/g-AM/V)')
+    plt.tight_layout()
+    ax.axhline(0, color='k',linestyle='--',linewidth=1)
+    # add title
+    return output_dict, fig, ax
+
 
 def plot_er_cell(cell_id, output_dict, discharge_se_lst_cell_id_1, fig, ax, save_folder="/scratch/venkvis_root/venkvis/shared_data/herald/all_cycling_plots/"):
     if not fig or not ax:
@@ -445,13 +548,14 @@ def plot_er_cell(cell_id, output_dict, discharge_se_lst_cell_id_1, fig, ax, save
     ax.set_ylabel("Energy Retention (%)", color="tab:orange")
     cell_id_1_cycles = output_dict["cycle_lst"]
     max_plot_cycles = min(max(cell_id_1_cycles), 10)
-    ax.set_xlim([0, min(int(max(cell_id_1_cycles)) + 1, 10)])
+    # ax.set_xlim([0, min(int(max(cell_id_1_cycles)) + 1, 10)])
+    # ax.set_xlim([0, 50])
     # ax.set_ylim([20,None])
     # only tick the integer x and tick no more than 5
-    n_ticks = 5 if max_plot_cycles > 10 else max_plot_cycles
-    ax.set_xticks(
-        np.linspace(1, max_plot_cycles, n_ticks).astype(int)
-    )
+    # n_ticks = 5 if max_plot_cycles > 10 else max_plot_cycles
+    # ax.set_xticks(
+    #     np.linspace(1, max_plot_cycles, n_ticks).astype(int)
+    # )
 
     # ax2.spines["right"].set_color("tab:orange")
     # ax2.spines["left"].set_color("tab:blue")
@@ -478,20 +582,141 @@ def plot_er_cell(cell_id, output_dict, discharge_se_lst_cell_id_1, fig, ax, save
     #     overall_er = (
     #         discharge_se_lst_cell_id_1[-1] / discharge_se_lst_cell_id_1[0] * 100
     #     )
-    return fig, ax
+    return fig, ax   
 
-def save_small_df(output_dict):
-    capacities = np.array(output_dict["specific_capacity_discharge_lst"][0]).flatten()
-    voltages = np.array(output_dict["voltage_discharge_lst"][0]).flatten()
-    powers = np.array(output_dict["specific_power_discharge_lst"][0]).flatten()
-    df_out = pd.DataFrame(
-        {
-            "specific_capacity_discharge": capacities,
-            "voltage_discharge": voltages,
-            "specific_power_discharge": powers,
-        }
-    )
-    df_out.to_csv('123H_discharge.csv',index=False)    
+def fit_2rc(t, V, final_current):
+    def rc_func(t, RC1, V1, RC2, V2, Vocv):
+        return Vocv - V1 * np.exp(-t / RC1) - V2 * np.exp(-t / RC2)
+    def residuals(params, t, V):
+        RC1, V1, RC2, V2, Vocv = params
+        return V - rc_func(t, RC1, V1, RC2, V2, Vocv)
+    # initial guess for R, C, V0
+    V1_guess = (V[-1] - V[1]) * 0.5
+    RC1_guess = 30
+    V2_guess = (V[-1] - V[1]) * 0.5
+    RC2_guess = 100
+    Vocv_guess = V[-1]
+    t = t - t.min()
+    # popt, pcov = curve_fit(rc_func, t[1:], V[1:], p0=[RC1_guess, V1_guess, RC2_guess, V2_guess, Vocv_guess], maxfev=10000)
+    initial_params = [RC1_guess, V1_guess, RC2_guess, V2_guess, Vocv_guess]
+    result = least_squares(residuals, initial_params, args=(t[1:], V[1:]), max_nfev=10000)
+    popt = result.x
+    RC1_fit, V1_fit, RC2_fit, V2_fit, Vocv_fit = popt
+    Rint = -(Vocv_fit - V1_fit - V2_fit - V[0]) / final_current * 1000
+    R1 = -V1_fit / final_current * 1000
+    C1 = RC1_fit / R1
+    R2 = -V2_fit / final_current * 1000
+    C2 = RC2_fit / R2
+    rmse = np.sqrt(np.mean((V[1:] - rc_func(t[1:], *popt))**2))
+    return Rint, R1, C1, V1_fit, R2, C2, V2_fit, Vocv_fit, rmse
+
+def gen_summary_df(output_dict, cell_id):
+    summary_csv = os.path.join('/'.join(id_to_path(cell_id).split('/')[:-1]),'cycle_summary.csv')
+    summary_df = pd.read_csv(summary_csv)
+    if 'full cycle' in summary_df.columns.tolist():
+        cycle_col_name = 'full cycle'
+    else:
+        cycle_col_name = 'cycle'
+    summary_df = summary_df[[cycle_col_name,'CE','Discharge Overpotential','Charge Overpotential',]]
+    cycles = output_dict['cycle_lst']
+    df = pd.read_csv(id_to_path(cell_id))
+    id_fam = int(cell_id[:-1])
+    if (id_fam <=171) or (id_fam >= 175 and id_fam<=178) or (id_fam==180) or (id_fam in [215,216,217,218,223,224]):
+        diameter = 1.6 # cm
+    else:
+        diameter = 1.4 # cm
+    area = np.pi * (diameter/2)**2  # cm2
+    summary_df['Discharge Rint (Ohm/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Discharge R1 (Ohm/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Discharge C1 (F/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Discharge R2 (Ohm/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Discharge C2 (F/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Discharge Vocv (V)'] = np.zeros(len(summary_df))
+    summary_df['Discharge RMSE (V)'] = np.zeros(len(summary_df))
+    summary_df['Charge Rint (Ohm/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Charge R1 (Ohm/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Charge C1 (F/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Charge R2 (Ohm/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Charge C2 (F/cm2)'] = np.zeros(len(summary_df))
+    summary_df['Charge Vocv (V)'] = np.zeros(len(summary_df))
+    summary_df['Charge RMSE (V)'] = np.zeros(len(summary_df))
+    ############# fit 2rc model to each cycle #############
+    for i, cycle in enumerate(cycles[1:]):
+        df1 = df[df['full cycle']==cycle].copy()
+        half_cycles = df1['half cycle'].unique().tolist()
+        for half_cycle in half_cycles:
+            df2 = df1[df1['half cycle']==half_cycle].copy()
+            if -1 in df2['state'].unique().tolist():
+                df2 = df2[df2['Voltage'] <= 2.0].copy()  # discharge relax
+            else:
+                df2 = df2[df2['Voltage'] >= 3.0].copy() # charge relax
+            all_rest_idx = df2.index[df2['state']==0].tolist()
+            start_rest_idx = df2.index[df2['state']==0].tolist()[0]-1
+            all_rest_idx = [start_rest_idx] + all_rest_idx
+            df2 = df2.loc[all_rest_idx].copy() # including last index before relax
+            final_current = df2['Current'].to_numpy()[0]  # in A
+            if half_cycle % 2 == 1:
+                t = df2['Time'].to_numpy()
+                t = t - t.min()
+                V = df2['Voltage'].to_numpy()
+                Rint, R1, C1, V1_fit, R2, C2, V2_fit, Vocv_fit, rmse = fit_2rc(t, V, final_current)
+                summary_df.loc[summary_df['full cycle']==cycle, 'Discharge Rint (Ohm/cm2)'] = Rint/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Discharge R1 (Ohm/cm2)'] = R1/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Discharge C1 (F/cm2)'] = C1/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Discharge R2 (Ohm/cm2)'] = R2/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Discharge C2 (F/cm2)'] = C2/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Discharge Vocv (V)'] = Vocv_fit
+                summary_df.loc[summary_df['full cycle']==cycle, 'Discharge V1 (V)'] = V1_fit
+                summary_df.loc[summary_df['full cycle']==cycle, 'Discharge V2 (V)'] = V2_fit
+                summary_df.loc[summary_df['full cycle']==cycle, 'Discharge RMSE (V)'] = rmse
+            else:
+                t = df2['Time'].to_numpy()
+                V = df2['Voltage'].to_numpy()
+                t = t - t.min()
+                Rint, R1, C1, V1_fit, R2, C2, V2_fit, Vocv_fit, rmse = fit_2rc(t, V, final_current)
+                summary_df.loc[summary_df['full cycle']==cycle, 'Charge Rint (Ohm/cm2)'] = Rint/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Charge R1 (Ohm/cm2)'] = R1/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Charge C1 (F/cm2)'] = C1/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Charge R2 (Ohm/cm2)'] = R2/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Charge C2 (F/cm2)'] = C2/area
+                summary_df.loc[summary_df['full cycle']==cycle, 'Charge Vocv (V)'] = Vocv_fit
+                summary_df.loc[summary_df['full cycle']==cycle, 'Charge V1 (V)'] = V1_fit
+                summary_df.loc[summary_df['full cycle']==cycle, 'Charge V2 (V)'] = V2_fit
+                summary_df.loc[summary_df['full cycle']==cycle, 'Charge RMSE (V)'] = rmse
+    return summary_df
+
+def chemistry_se(energy_am,cell_id):
+    spec_df = pd.read_csv('/scratch/venkvis_root/venkvis/shared_data/herald/In-house cells and syntheses - cell-design-input.csv')
+    coeffs = {"70_3_30": 0.63,
+    "75_3_30": 0.67,
+    "80_3_30": 0.71,
+    "80_5_30": 0.71,
+    "85_1_30": 0.77,
+    "85_2_30": 0.77,
+    "85_3_30": 0.76,
+    "85_5_30": 0.761,
+    "87_3_30": 0.77,
+    '60_15_52': 0.47,
+    '80_5_52': 0.63,
+    '90_5_52': 0.72,
+    '70_5_52': 0.54,
+    '85_5_52': 0.67,
+    '90_5_30': 0.81,
+    '60_15_30': 0.54,
+    '70_5_30': 0.63,
+    } # AM to chem coefficient
+    df1 = spec_df[spec_df['cell id']==cell_id].copy()
+    if len(df1)>0:
+        fef3_mass = int(df1['cathode FeF3 mass fraction'].values[0]*100)
+        binder_mass = int(df1['cathode binder mass fraction'].values[0]*100)
+        porosity = int(df1['porosity'].values[0]*100)
+        coeff = coeffs[f'{fef3_mass}_{binder_mass}_{porosity}']
+    else:
+        return None
+    discharge_se_lst_chem = energy_am * coeff
+    return discharge_se_lst_chem
+
+
 
 if __name__ == "__main__":
     
@@ -506,15 +731,20 @@ if __name__ == "__main__":
     se_am_dict = {}
     sc_am_dict = {}    
     avg_voltage_dict = {}
+    se_chem_dict = {}
     ids_cleaned = []
     for cell_id in ids:
         print(
             f"Processing Cell ID: {cell_id}"
         )
         fig1, ax1 = plt.subplots(1, 1, figsize=(9, 6), dpi=100)
+        fig2, ax2 = plt.subplots(1, 1, figsize=(9, 6), dpi=100)
         try:
             output_dict, fig1, ax1 = plot_voltage_vs_capacity_single_cell_with_overpotential(
                 cell_id, fig1, ax1
+            )
+            output_dict, fig2, ax2 = plot_dqdv_single_cell(
+                cell_id, fig2, ax2
             )
             ids_cleaned.append(cell_id)
         except: 
@@ -563,6 +793,11 @@ if __name__ == "__main__":
             dpi=100,
             bbox_inches="tight",
         )
+        fig2.savefig(
+            save_folder + f"{cell_id}_dqdv.png",
+            dpi=100,
+            bbox_inches="tight",
+        )
         if output_dict is None:
             continue
         # calculate specific energy
@@ -584,11 +819,16 @@ if __name__ == "__main__":
             save_folder=save_folder,
         )
         # save_small_df(output_dict)
-
+        discharge_se_lst_chem = chemistry_se(discharge_se_lst_cell_id_1, cell_id)
+        if discharge_se_lst_chem is None:
+            continue
+        if len(discharge_se_lst_chem) == 0:
+            continue
         discharge_sc_lst_cell_id_1 = np.array(discharge_sc_lst_cell_id_1)
         avg_voltage_lst_cell_id_1 = discharge_se_lst_cell_id_1 / discharge_sc_lst_cell_id_1
         se_am_dict[cell_id] = discharge_se_lst_cell_id_1.tolist()
         sc_am_dict[cell_id] = discharge_sc_lst_cell_id_1.tolist()
+        se_chem_dict[cell_id] = discharge_se_lst_chem.tolist()
         avg_voltage_dict[cell_id] = avg_voltage_lst_cell_id_1.tolist()
         print(f"Discharge SE for {cell_id}: {list(discharge_se_lst_cell_id_1)}")
         print(f'Discharge SC for {cell_id}: {list(discharge_sc_lst_cell_id_1)}')
@@ -596,18 +836,30 @@ if __name__ == "__main__":
         plt.close(fig1)
         plt.close(fig)
 
+        # # generate and save summary df
+        try:
+            summary_df = gen_summary_df(output_dict, cell_id)
+            summary_df = summary_df.round(3)
+            summary_df.to_csv(save_folder + f"{cell_id}_summary.csv", index=False)
+        except:
+            print(f'cell id {cell_id} cannot generate summary df, skipping')
+        continue
+
     yaml = YAML()
     yaml.indent(mapping=2, sequence=4, offset=2)
     with open(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/hypo_se_am_dict.yaml", "w"
+        "/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_am_dict.yaml", "w"
     ) as file:
         yaml.dump(se_am_dict, file)
     with open(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/hypo_sc_am_dict.yaml", "w"
+        "/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_sc_am_dict.yaml", "w"
     ) as file:
         yaml.dump(sc_am_dict, file)
     with open(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/hypo_vavg_am_dict.yaml", "w"
+        "/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_vavg_am_dict.yaml", "w"
     ) as file:
         yaml.dump(avg_voltage_dict, file)
-
+    with open(
+        "/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_chem_dict.yaml", "w"
+    ) as file:
+        yaml.dump(se_chem_dict, file)

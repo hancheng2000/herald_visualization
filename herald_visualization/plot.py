@@ -611,3 +611,62 @@ def plot_cycling_plotly(dfs, cycles='all', labels=None, colormap=None,
     )
     
     return fig
+
+def plot_peaks_on_ax(
+    ax: plt.Axes,
+    voltage: np.ndarray,
+    dqdv: np.ndarray,
+    peaks_df: pd.DataFrame,
+    *,
+    marker='o',
+    marker_size=70,
+    edgecolor='k',
+    linewidth=1.0,
+    annotate=True,
+    window_shading=None   # pass List[VWindow] to shade windows
+):
+    """
+Overlay detected peaks on an existing dQ/dV plot by adding hollow markers at peak voltages,
+optional vertical stems from 0 to the peak amplitude, light window shading, and small labels.
+Args:
+    ax (matplotlib.axes.Axes):
+        Axes to draw on (should already contain the dQ/dV curve).
+    voltage (array-like):
+        Voltage values corresponding to the plotted curve.
+    dqdv (array-like):
+        dQ/dV values corresponding to `voltage`.
+    peaks_df (pandas.DataFrame):
+        Peaks table from `find_peaks_in_windows` with at least ['v_peak', 'amplitude'].
+    marker (str, optional):
+        Marker style. Default: 'o'.
+    marker_size (float, optional):
+        Marker size (points^2). Default: 70.
+    edgecolor (str, optional):
+        Edge color for markers and stems. Default: 'k'.
+    linewidth (float, optional):
+        Line width for marker edges and stems. Default: 1.0.
+    annotate (bool, optional):
+        If True, add text labels near peaks. Default: True.
+    window_shading (list[VWindow] or None, optional):
+        If provided, shade each [vmin, vmax] voltage window.
+Returns:
+    matplotlib.axes.Axes:
+        The input axes with peak markers, stems, optional shading, and annotations added.
+"""
+    if window_shading:
+        for w in window_shading:
+            ax.axvspan(w.vmin, w.vmax, alpha=0.07, color='grey', lw=0, zorder=0)
+    if peaks_df is None or peaks_df.empty:
+        return ax
+    ax.scatter(peaks_df['v_peak'], peaks_df['amplitude'],
+               s=marker_size, marker=marker, facecolors='none',
+               edgecolors=edgecolor, linewidths=linewidth, zorder=5)
+    for _, r in peaks_df.iterrows():
+        ax.vlines(r['v_peak'], 0, r['amplitude'], colors=edgecolor, linestyles=':', alpha=0.6, zorder=4)
+    if annotate:
+        for _, r in peaks_df.iterrows():
+            txt = f"{r['window']}\n{r['v_peak']:.3f} V"
+            ax.annotate(txt, xy=(r['v_peak'], r['amplitude']),
+                        xytext=(5, 8), textcoords='offset points', fontsize=8,
+                        bbox=dict(boxstyle='round,pad=0.2', fc='white', ec=edgecolor, alpha=0.8))
+    return ax

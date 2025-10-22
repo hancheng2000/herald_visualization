@@ -1,10 +1,20 @@
-import os, glob, sys
+import os, glob, argparse
 from herald_visualization.mpr2csv import cycle_mpr2csv
 
-if len(sys.argv) > 1 and sys.argv[1] == '-a': # -a can be entered as a switch following the script name when executing
-    process_all_files = True # Analyze every file located
-else:
-    process_all_files = False # Only analyze fresh data
+# Argument parsing
+parser = argparse.ArgumentParser()
+parser.add_argument('-a', '--all', help="Analyze even if no new data is found since last analysis.", action='store_true')
+parser.add_argument('-d', '--dry-run', help="Do not export csv after analysis.", action='store_false')
+# parser.add_argument('-o', '--opt-timeout', help="Wait x sec for user response at prompts. Set to -1 to wait indefinitely. Default 10. (Not implemented)", default=10.0, type=float)
+parser.add_argument('-r', '--recent', help="Only analyze tests with new data from the past x days.", type=float)
+parser.add_argument('-s', '--skip-size', help="Skip analysis if data filesize exceeds this value (MB).", type=float)
+args = parser.parse_args()
+export_csv = args.dry_run # Set flag for exporting csv (False if -d arg is given)
+if args.recent:
+    import time
+    # Determine the earliest Unix timestamp within the previous args.recent days
+    earliest_time = time.time() - (args.recent*86400)
+
 base_path = os.getcwd()
 
 # Check for a file defining the path to the local system's data directory
@@ -23,29 +33,38 @@ else:
     f.write(root_dir)
     f.close()
 
-glob_list = glob.glob(r'**/*CC[0-9][0-9][0-9][A-Z]*/', root_dir=root_dir)
+glob_list = glob.glob(r'**/*CC[1-9][0-9][0-9][A-Z]*/', root_dir=root_dir)
 glob_list.sort() # Sorting alphanumerically makes it easier to determine how far along the batch is while running
 run_count = 0
 for path in glob_list:
     full_path = os.path.join(root_dir, path)
-    # if 'BCS905' not in full_path.split('/'):
-        # print(f"Skipping {full_path} as it is not a BCS905 data path.")
-        # continue
-    print(f"Processing {full_path}")
-    output_files = glob.glob(os.path.join(full_path, 'outputs', '*.csv'))
-    if len(output_files) > 0:
-        processed_time = max([os.path.getmtime(file) for file in output_files])
-    else:
-        processed_time = 0 # Makes program consider the (nonexistent) summary file as outdated
-    data_files = glob.glob(os.path.join(full_path, '*.mpr')) + glob.glob(os.path.join(full_path, '*.csv'))
     try:
+        output_files = glob.glob(os.path.join(full_path, 'outputs', '*.csv'))
+        if len(output_files) > 0:
+            processed_time = max([os.path.getmtime(file) for file in output_files])
+        else:
+            processed_time = 0 # Makes program consider the (nonexistent) summary file as outdated
+        data_files = glob.glob(os.path.join(full_path, '*.mpr')) + glob.glob(os.path.join(full_path, '*.csv'))
         # Looks for both .mpr files from EC-Lab and .csv files from BT-Export
+        
         latest_data_time = max([os.path.getmtime(file) for file in data_files])
-        if latest_data_time > processed_time or process_all_files:
-            cycle_mpr2csv(full_path)
-            run_count += 1
+        # Only look at data newer than the exported files, unless --all is set
+        if not args.all and latest_data_time < processed_time:
+            raise ValueError('Data too old')
+        # If --recent is set, only consider tests with data newer than requested, otherwise all tests from above
+        if args.recent and latest_data_time < earliest_time:
+            raise ValueError('Data too old')  
+        if args.skip_size: # If flag is set to skip above a certain file size
+            total_data_size = sum([os.path.getsize(file) for file in data_files])/(1024**2) # Calculate total size of data files in MB
+            if total_data_size > args.skip_size:
+                print(f"File size in {path} ({total_data_size} MB) exceeds {args.skip_size} MB. Analysis skipped.")
+                raise ValueError('File size too large')
     except:
         # Return to the base path if there's an error, otherwise we're left stranded in a random dir
         os.chdir(base_path)
-print(f"Located {len(glob_list)} data paths.")
-print(f"Ran mpr2csv in {run_count} data paths.")
+    else:
+        # If no exceptions were raised, run mpr2csv
+        cycle_mpr2csv(full_path, export_csv=export_csv)
+        run_count += 1
+print(f"\nLocated {len(glob_list)} data paths.")
+print(f"Ran cycle_mpr2csv in {run_count} data paths.")

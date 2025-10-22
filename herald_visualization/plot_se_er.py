@@ -38,12 +38,127 @@ default_params = {
 }
 plt.rcParams.update(default_params)
 
+def plot_se_am_vs_cycle_with_std(se_dict, hypo_testing_dict, hypo_key, fig=None, ax=None):
+    norm = Normalize(vmin=1, vmax=10)
+    sm = ScalarMappable(cmap='Blues_r', norm=norm)
+    colors = ['tab:blue','tab:red','tab:orange','tab:purple','tab:brown','tab:olive']*1000
+    linestyles = [':','-.','--','-']*1000
+    markers = ['o','v','^','s','*','<','>','x','p']*1000    
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 10))
+    cell_ids = list(se_dict.keys())
+    try:
+        min_cell_id = int(cell_ids[0][:-1])
+    except IndexError:
+        print(f"Hypo {hypo_key}: Cell IDs not found")
+        return
+    latest_cell_id = int(cell_ids[0][:-1])
+    color_idx = 0
+    marker_idx = 0
+    linestyle_idx = 0
+    cell_id_families = set(int(cell_id[:-1]) for cell_id in cell_ids)
+    # group cell_ids by family, key equal to int(cell_id[:-1])
+    cell_id_family_dict = {family: [cell_id for cell_id in cell_ids if int(cell_id[:-1]) == family] for family in cell_id_families}
+    for cell_id_family in sorted(cell_id_family_dict.keys()):
+        all_energies = []
+        # find the cell_id corresponding to max energy in the family
+        family_cell_ids = cell_id_family_dict[cell_id_family]
+        max_len = min([len(se_dict[cell_id]) for cell_id in family_cell_ids if cell_id in se_dict])
+        for cell_id in family_cell_ids:
+            if cell_id in se_dict:
+                all_energies.append(se_dict[cell_id][1:min(max_len,11)])
+        all_energies = np.array(all_energies)
+        mean_energies = np.nanmean(all_energies, axis=0)
+        std_energies = np.nanstd(all_energies, axis=0)
+        cycles = np.arange(1, len(mean_energies) + 1)
+        # er = mean_energies / mean_energies[0] * 100
+        # er_std = std_energies / mean_energies[0] * 100
+        ax.plot(cycles, mean_energies, color=colors[color_idx], linestyle=linestyles[linestyle_idx], marker=markers[marker_idx], markersize=15, markeredgecolor='black', label=f'{cell_id_family} series')
+        ax.fill_between(cycles, mean_energies - std_energies, mean_energies + std_energies, color=colors[color_idx], alpha=0.2)
+        marker_idx += 1
+        linestyle_idx += 1
+        color_idx += 1
+
+    ax.set_title(f'Track {hypo_key}: {hypo_testing_dict[hypo_key]["Track"]}')
+    ax.set_xlabel('Cycle Number')
+    ax.set_ylabel('Specific Energy (Wh/kg-AM)')
+    return fig,ax
+
+def plot_sc_am_vs_cycle_with_std(sc_dict, hypo_testing_dict, hypo_key, fig=None, ax=None):
+    norm = Normalize(vmin=1, vmax=10)
+    sm = ScalarMappable(cmap='Blues_r', norm=norm)
+    colors = ['tab:blue','tab:red','tab:orange','tab:purple','tab:brown','tab:olive']*1000
+    linestyles = [':','-.','--','-']*1000
+    markers = ['o','v','^','s','*','<','>','x','p']*1000    
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 10))
+    cell_ids = list(sc_dict.keys())
+    try:
+        min_cell_id = int(cell_ids[0][:-1])
+    except IndexError:
+        print(f"Hypo {hypo_key}: Cell IDs not found")
+        return
+    latest_cell_id = int(cell_ids[0][:-1])
+    color_idx = 0
+    marker_idx = 0
+    linestyle_idx = 0
+    cell_id_families = set(int(cell_id[:-1]) for cell_id in cell_ids)
+    # group cell_ids by family, key equal to int(cell_id[:-1])
+    cell_id_family_dict = {family: [cell_id for cell_id in cell_ids if int(cell_id[:-1]) == family] for family in cell_id_families}
+    for cell_id_family in sorted(cell_id_family_dict.keys()):
+        all_capacities = []
+        # find the cell_id corresponding to max energy in the family
+        family_cell_ids = cell_id_family_dict[cell_id_family]
+        max_len = min([len(sc_dict[cell_id]) for cell_id in family_cell_ids if cell_id in se_dict])
+        for cell_id in family_cell_ids:
+            if cell_id in sc_dict:
+                all_capacities.append(sc_dict[cell_id][1:min(max_len,11)])
+        all_capacities = np.array(all_capacities)
+        mean_capacities = np.nanmean(all_capacities, axis=0)
+        std_capacities = np.nanstd(all_capacities, axis=0)
+        cycles = np.arange(1, len(mean_capacities) + 1)
+        ax.plot(cycles, mean_capacities, color=colors[color_idx], linestyle=linestyles[linestyle_idx], marker=markers[marker_idx], markersize=15, markeredgecolor='black', label=f'{cell_id_family} series')
+        ax.fill_between(cycles, mean_capacities-std_capacities, mean_capacities+std_capacities, color=colors[color_idx], alpha=0.2)
+        marker_idx += 1
+        linestyle_idx += 1
+        color_idx += 1
+
+    ax.set_title(f'Track {hypo_key}: {hypo_testing_dict[hypo_key]["Track"]}')
+    ax.set_xlabel('Cycle Number')
+    ax.set_ylabel('Specific Capacity (mAh/g-AM)')
+    return fig,ax
+
+
+def chemistry_se(cell_id, se_dict):
+    discharge_se_lst_cell_id_1 = se_dict[cell_id][1:] # skip formation cycle
+    spec_df = pd.read_csv('/scratch/venkvis_root/venkvis/shared_data/herald/In-house cells and syntheses - cell-design-input.csv')
+    coeffs = {"70_3": 0.63,
+    "75_3": 0.67,
+    "80_3": 0.71,
+    "85_1": 0.77,
+    "85_2": 0.77,
+    "85_3": 0.76,
+    "85_5": 0.76,
+    "87_3": 0.77,
+    } # AM to chem coefficient
+    df1 = spec_df[spec_df['cell id']==cell_id].copy()
+    fef3_mass = int(df1['cathode FeF3 mass fraction'].values[0]*100)
+    binder_mass = int(df1['cathode binder mass fraction'].values[0]*100)
+    coeff = coeffs[f'{fef3_mass}_{binder_mass}']
+    discharge_se_lst_chem = discharge_se_lst_cell_id_1 * coeff
+    return discharge_se_lst_chem
+
+
 if __name__ == '__main__':
     yaml = YAML()
-    with open('/scratch/venkvis_root/venkvis/shared_data/herald/hypo_se_am_dict.yaml','r') as f:
+    with open('/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_am_dict.yaml','r') as f:
         hypo_se_am_dict = yaml.load(f)
     with open('/scratch/venkvis_root/venkvis/shared_data/herald/hypo_testing.yaml','r') as f:
         hypo_testing_dict = yaml.load(f)
+    with open('/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_chem_dict.yaml') as f:
+        hypo_se_chem_dict = yaml.load(f)
+    with open('/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_sc_am_dict.yaml') as f:
+        hypo_sc_am_dict = yaml.load(f)
 
     norm = Normalize(vmin=1, vmax=10)
     sm = ScalarMappable(cmap='Blues_r', norm=norm)
@@ -56,6 +171,7 @@ if __name__ == '__main__':
         # take these cell_ids and create a new dictionary from hypo_se_am_dict
         se_dict = {cell_id: hypo_se_am_dict[cell_id] for cell_id in cell_ids if cell_id in hypo_se_am_dict}
         fig, ax = plt.subplots(figsize=(10, 10))
+        fig2, ax2 = plt.subplots(figsize=(10, 10))
         cell_ids = list(se_dict.keys())
         try:
             min_cell_id = int(cell_ids[0][:-1])
@@ -67,26 +183,19 @@ if __name__ == '__main__':
         marker_idx = 0
         linestyle_idx = 0
         cell_id_families = set(int(cell_id[:-1]) for cell_id in cell_ids)
-        # group cell_ids by family, key equal to int(cell_id[:-1])
-        cell_id_family_dict = {family: [cell_id for cell_id in cell_ids if int(cell_id[:-1]) == family] for family in cell_id_families}
-        max_energy_ids = []
-        # for cell_id_family in sorted(cell_id_family_dict.keys()):
-        #     # find the cell_id corresponding to max energy in the family
-        #     family_cell_ids = cell_id_family_dict[cell_id_family]
-        #     max_energy = -1
-        #     max_energy_cell_id = None
-        #     for cell_id in family_cell_ids:
-        #         if cell_id in se_dict:
-        #             energy = max(se_dict[cell_id][1:])
-        #             if energy > max_energy:
-        #                 max_energy = energy
-        #                 max_energy_cell_id = cell_id
-        #     if max_energy_cell_id is not None:
-        #         family_cell_ids.remove(max_energy_cell_id)
-        #         family_cell_ids.insert(0, max_energy_cell_id)
-        #         max_energy_ids.append(max_energy_cell_id)
-        max_energy = -1
-        min_energy = 1e6
+        # # group cell_ids by family, key equal to int(cell_id[:-1])
+        # cell_id_family_dict = {family: [cell_id for cell_id in cell_ids if int(cell_id[:-1]) == family] for family in cell_id_families}
+        # all_energies = []
+        # fig, ax = plot_se_am_vs_cycle_with_std(se_dict, hypo_testing_dict, key, fig, ax)
+        # ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', labelspacing=1.2)
+        # fig.savefig(f'/scratch/venkvis_root/venkvis/shared_data/herald/email_cycling_plots/hypothesis_{key}_se_am_vs_cycle.png', bbox_inches='tight', dpi=100)
+        # plt.close(fig)
+        # fig, ax = plt.subplots(figsize=(10, 10))
+        # sc_dict = {cell_id: hypo_sc_am_dict[cell_id] for cell_id in cell_ids if cell_id in hypo_sc_am_dict}
+        # fig, ax = plot_sc_am_vs_cycle_with_std(sc_dict, hypo_testing_dict, key, fig, ax)
+        # ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', labelspacing=1.2)
+        # fig.savefig(f'/scratch/venkvis_root/venkvis/shared_data/herald/email_cycling_plots/hypothesis_{key}_sc_am_vs_cycle.png', bbox_inches='tight', dpi=100)
+        # plt.close(fig)
         for cell_id in cell_ids:
             se = se_dict[cell_id][1:] # skip formation cycle
             se = np.array(se)
@@ -114,12 +223,13 @@ if __name__ == '__main__':
                 latest_cell_id = cell_id_family
             er_cap = 80
             max_cycle_above_80 = np.where(er>=er_cap)[0]
-            ax.plot(se, er, color=colors[color_idx], linestyle=linestyles[linestyle_idx], marker=markers[marker_idx], markersize=20, markeredgecolor='black', label=f'{cell_id}:{hypo_testing_dict[key]["cell_ids_and_specs"][cell_id]}\n{len(max_cycle_above_80)} of {len(er)} cycles above {er_cap}%')
+            ax.plot(se, er, color=colors[color_idx], linestyle=linestyles[linestyle_idx], marker=markers[marker_idx], markersize=20, markeredgecolor='black', label=f'{cell_id}:{hypo_testing_dict[key]["cell_ids_and_specs"][cell_id]}\n{len(max_cycle_above_80)} cycles above {er_cap}%')
+            ax2.plot()
             se = se[er>=er_cap]
-            if len(se)>1 and se.max() > max_energy:
-                max_energy = se.max()
-            if len(se)>1 and se.min() < min_energy:
-                min_energy = se.min()
+            # if len(se)>1 and se.max() > max_energy:
+            #     max_energy = se.max()
+            # if len(se)>1 and se.min() < min_energy:
+            #     min_energy = se.min()
         # cax = fig.add_axes([0.92, 0.2, 0.02, 0.6])  # [left, bottom, width, height] in figure coordinates
         # cbar = fig.colorbar(sm, cax=cax)
         # cbar.set_label("Cycle Number")
@@ -131,8 +241,8 @@ if __name__ == '__main__':
         #     ax.set_xlim([min_energy*0.95, max_energy*1.05])
         # else:
         #     ax.set_xlim([None, 1200])
-        ax.set_xlim([600, 1200])
+        ax.set_xlim([800, 1300])
         ax.set_title(f'Track {key}: {hypo_testing_dict[key]["Track"]}')
-        ax.legend(bbox_to_anchor=(1.1, 1), loc='upper left', labelspacing=1.2)
+        ax.legend(bbox_to_anchor=(1.1, 1), loc='upper left', labelspacing=1.2, ncols=2)
         fig.savefig(f'/scratch/venkvis_root/venkvis/shared_data/herald/email_cycling_plots/hypothesis_{key}_se_er.png', bbox_inches='tight', dpi=100)
         plt.close(fig)

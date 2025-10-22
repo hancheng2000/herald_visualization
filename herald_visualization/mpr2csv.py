@@ -8,6 +8,8 @@ import os
 import herald_visualization.echem as ec
 import json
 
+# TODO: implement proper logging
+
 # Functions
 
 # Check for a file defining the path to the local system's data directory
@@ -29,9 +31,14 @@ else:
 def id_to_path(cellid, root_dir=data_path):
     """
     Find the correct directory path to a data folder from the cell ID
+    Searching skips any directory containing a file called skip.txt
     """
     glob_str = os.path.join('**', '*'+cellid+'*/')
     paths = glob.glob(glob_str, root_dir=root_dir, recursive=True)
+    # Ignore all directories containing skip.txt
+    # This makes it easier to deal with duplicate IDs, e.g. when a cell is run on multiple cyclers
+    paths = [p for p in paths if not os.path.isfile(os.path.join(root_dir, p, 'skip.txt'))]
+
     if len(paths) == 1:
         return os.path.join(root_dir, paths[0])
     elif len(paths) == 0:
@@ -94,16 +101,16 @@ def import_data_using_listfile(df, listfile='stitch.txt'):
         # Calculate time_offset from existing data in df
         if bool:
             try:
-                time_offset = df['time/s'].max()
+                time_offset = df['Time'].max()
             except KeyError: # Takes care of case where True appears before there is data present
                 time_offset = 0.0
         else:
             time_offset = 0.0
         # Only do the full processing step on the last file to load, in order to speed up loading
         if i == len(data_filenames) - 1:
-            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, processing=True)
+            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, calc_cycles_and_cap=True)
         else:
-            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, processing=False)
+            df = ec.echem_file_loader(file, df_to_append_to=df, time_offset=time_offset, calc_cycles_and_cap=False)
     
     print(f"Imported using {listfile}.")
     return data_filenames, df
@@ -141,10 +148,10 @@ def import_data_using_pattern(df, extension):
     for i, file in enumerate(data_filenames):
         # Only do the full processing step on the last file to load, in order to speed up loading
         if i == len(data_filenames) - 1:
-            df = ec.echem_file_loader(file, df_to_append_to=df, processing=True)
+            df = ec.echem_file_loader(file, df_to_append_to=df, calc_cycles_and_cap=True)
         else:
-            df = ec.echem_file_loader(file, df_to_append_to=df, processing=False)
-    
+            df = ec.echem_file_loader(file, df_to_append_to=df, calc_cycles_and_cap=False)
+
     return data_filenames, df
 
 def settings_filename_from_data_filename(data_filename):
@@ -167,7 +174,8 @@ def import_settings(settings_filename):
     # Val: string in the associated line of the settings file
     # Handles both .mps files from EC-Lab and .json files from BT-Export
     file_extension = os.path.splitext(settings_filename)[-1].lower()
-    val_regex = r'\d+\.?\d*' # Regex for numeric values
+    val_regex = r'(?<![a-zA-Z])\d+\.?\d*' # Regex for numeric values that aren't immediately preceded by letters
+    # This is necessary to match x.xxx values, x values, and ignore the 2 in cm2
     cell_props = {}
 
     try:
@@ -184,9 +192,7 @@ def import_settings(settings_filename):
 
             with open(settings_filename, 'r', errors='ignore') as file:
                 # Iterate through settings file to fill in active material mass and other cell parameters
-                i = 0
                 while True:
-                    i += 1
                     line = file.readline()
                     if not line:
                         break
@@ -195,7 +201,8 @@ def import_settings(settings_filename):
                         if new_key:
                             match = re.findall(val_regex, line)
                             # The final matching string is used
-                            cell_props[new_key[0]] = float(match[-1])         
+                            if match:
+                                cell_props[new_key[0]] = float(match[-1])         
                 return cell_props
         elif file_extension == '.json':
             settings_keys = {
@@ -211,12 +218,35 @@ def import_settings(settings_filename):
                 settings = json.load(file)
                 for key, val in settings_keys.items():
                     match = re.findall(val_regex, settings['dutType'][val])
-                    cell_props[key] = float(match[-1])
+                    if match:
+                        cell_props[key] = float(match[-1])
                 return cell_props
 
     except:
         print("Unable to read settings file.")
-        
+
+def dict_vals_agree(dicts, tolerance=0.02):
+    """
+    Check that all dicts within a list have equal values for shared keys
+    within a specified tolerance.
+    """
+    if len(dicts) <= 1:
+        return True # Trivially true if there are 0 or 1 dicts
+    
+    # Find keys that appear in at least 2 dicts
+    shared_keys = set.intersection(*(set(d.keys()) for d in dicts))
+
+    for key in shared_keys:
+        # Compare all values to the first dict's value
+        # If any exceed the tolerance, then dicts are not in agreement
+        values = [d[key] for d in dicts if key in d]
+        ref = values[0]
+        for v in values[1:]:
+            if abs(v - ref) > tolerance:
+                return False
+    
+    return True
+
 def total_AM_mass(cell_props):
     """
     Uses cell properties imported from a settings file to convert the cathode AM mass
@@ -243,7 +273,8 @@ def total_AM_mass(cell_props):
 # convert all relevant data to .csv
 def cycle_mpr2csv(
         dir_name,
-        listfile='stitch.txt'
+        listfile='stitch.txt',
+        export_csv=True
     ):
     df = pd.DataFrame()
     home_dir = os.getcwd()
@@ -266,43 +297,55 @@ def cycle_mpr2csv(
 
     # Check that all test files came from the same settings file, i.e. test
     settings_filenames = [settings_filename_from_data_filename(filename) for filename in data_filenames]
-    if len(set(settings_filenames)) > 1:
-        print("Auto-search found files from multiple tests. The first test's settings file is being used. A listfile may be needed if not already present.")
-    # Assume that the cell characteristics are the same in all settings files,
-    # only look at settings file associated with first data file
-    settings_filename = settings_filenames[0]
-    cell_props = import_settings(settings_filename)
-    print(f"Settings file: {settings_filename}")
+    settings_filename = settings_filenames[0] # First settings file will be used if they are all consistent
+    print(f"Settings file(s): {settings_filenames}")
+    cell_props_dicts = [import_settings(f) for f in settings_filenames]
+    if (not cell_props_dicts) or all(not d for d in cell_props_dicts):
+        # If no properties were found
+        print("No cell properties imported.")
+        cell_props = {}
+    elif not dict_vals_agree(cell_props_dicts):
+        print(f"Cell properties are inconsistent between settings files: {cell_props_dicts}.")
+        cell_props = {}
+    else:
+        # If all settings files are consistent, use the first to get properties
+        cell_props = import_settings(settings_filename)
 
     # Post-process
-    if cell_props:
-        print(f"Cell properties: {cell_props}")
+    if 'active_material_mass' in cell_props:
         mass = cell_props['active_material_mass']
-        full_mass = total_AM_mass(cell_props)
-        area = cell_props['surface_area']
-        df = ec.df_post_process(df, 
-                                mass=mass,
-                                full_mass=full_mass, 
-                                area=area)
     else:
-        print(f"No cell properties imported.")
-        df = ec.df_post_process(df)
+        mass = 0 # Will be ignored by df_post_process
+    if all(key in cell_props for key in ['interc_weight', 'x_at_mass', 'empty_mol_weight', 'e_per_ion', 'active_material_mass']):
+        # All of the above keys are required to calculate full_mass
+        full_mass = total_AM_mass(cell_props)
+    else:
+        full_mass = 0
+    if 'surface_area' in cell_props:
+        area = cell_props['surface_area']
+    else:
+        area = 0
+    df = ec.df_post_process(df, 
+                            mass=mass,
+                            full_mass=full_mass, 
+                            area=area)
 
-    # Export navani-processed dataframe as a .csv for later use
-    # Path for .csv with same filename as .mps or .json
-    os.makedirs('outputs', exist_ok=True)
-    settings_extension = os.path.splitext(settings_filename)[-1].lower()
-    output_filename = settings_filename.removesuffix(settings_extension) + '.csv'
-    data_csv_filename = os.path.join('outputs', output_filename)
-    df.to_csv(data_csv_filename)
-    print(f"CSV exported to: {data_csv_filename}")
+    if export_csv:
+        # Export navani-processed dataframe as a .csv for later use
+        # Path for .csv with same filename as .mps or .json
+        os.makedirs('outputs', exist_ok=True)
+        settings_extension = os.path.splitext(settings_filename)[-1].lower()
+        output_filename = settings_filename.removesuffix(settings_extension) + '.csv'
+        data_csv_filename = os.path.join('outputs', output_filename)
+        df.to_csv(data_csv_filename)
+        print(f"CSV exported to: {data_csv_filename}")
 
-    # Export a cycle summary .csv if multiple half cycles are present
-    if df['half cycle'].max() >= 1:
-        cycle_summary = ec.cycle_summary(df, mass=mass, full_mass=full_mass, area=area)
-        cycle_summary_csv_filename = os.path.join('outputs', 'cycle_summary.csv')
-        cycle_summary.to_csv(cycle_summary_csv_filename)
-        # print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
+        # Export a cycle summary .csv if multiple half cycles are present
+        if df['half cycle'].max() >= 1:
+            cycle_summary = ec.cycle_summary(df, mass=mass, full_mass=full_mass, area=area)
+            cycle_summary_csv_filename = os.path.join('outputs', 'cycle_summary.csv')
+            cycle_summary.to_csv(cycle_summary_csv_filename)
+            # print(f"Cycle summary CSV exported to: {cycle_summary_csv_filename}")
     
     os.chdir(home_dir)
     return df
@@ -331,45 +374,3 @@ def eis_mpr2csv(
     home_dir = os.getcwd()
     df.to_csv(os.path.join(dir_name, 'outputs', file_name), index=False)
     return df
-
-
-# # Split data into sections based on current to figure out when relaxation is happening
-# i = 0
-# while i < len(data):
-
-#     while np.array(data['control/V/mA'])[i] < 0.0:
-#         i=i+1
-#     start_indices.append(i)
-
-#     while np.array(data['control/V/mA'])[i] == 0.0 and i <= len(data):
-#         i=i+1
-#         if i == len(data):
-#             break
-#     end_indices.append(i)
-
-
-# # Plot relaxation curves for each GITT relaxation
-# os.makedirs('relaxations', exist_ok=True)
-# for i in range(len(start_indices)):
-#     x_data = data['time/s'][start_indices[i]:end_indices[i]]/3600 - data['time/s'][start_indices[i]]/3600
-#     y_data = data['Ewe/V'][start_indices[i]:end_indices[i]]
-#     np.savetxt('relaxations/'+str(i)+'.csv', np.transpose([x_data, y_data]), delimiter=',')
-#     # popt, pcov = curve_fit(func, x_data, y_data, p0=popt, method='lm', maxfev=10000)
-#     # print(popt)
-#     # plt.plot(x_data, func(x_data, *popt), 'r-', label='fit')
-#     plt.plot(x_data, y_data, label='Data', color='black')
-#     plt.ylim(voltage_limits)
-#     plt.xlabel('Time (hr)')
-#     plt.ylabel('Voltage (v)')
-#     plt.title(str(i+1)+'th relaxation')
-#     plt.savefig('relaxations/'+str(i)+'.png')
-#     plt.close()
-
-# # Plot pseudo-OCV curve
-# plt.plot(-1*data['(Q-Qo)/mA.h'][np.array(end_indices)], data['Ewe/V'][np.array(end_indices)])
-# plt.ylim(voltage_limits)
-# plt.xlabel('Discharge capacity (mAh)')
-# plt.ylabel('Voltage (V)')
-# plt.title('Pseudo-OCV')
-# plt.savefig('plots/pseudo_OCV.png')
-# plt.close()
