@@ -761,14 +761,21 @@ if __name__ == "__main__":
         ax1_2.tick_params(axis='y', colors=color)
         ax1_2.spines['right'].set_color(color)
         areal_current = -output_dict['areal_current_discharge_lst'][1]
-        sc = output_dict['specific_capacity_discharge_lst'][1]
         areal_current = np.array(areal_current)
+        # if areal_current.max() < 0.1:
+        #     areal_current *= 1000 # might be a problem parsing data, A/cm2 to mA/cm2
+        sc = output_dict['specific_capacity_discharge_lst'][1]
         sc = np.array(sc)
         ax1_2.plot(sc, areal_current, color=color, linestyle='--', linewidth=2, alpha=1.0)
         ax1_2.set_ylim([0, 2.0])
 
         # Right axis #2: Power (create new twinx and offset its spine)
         power = -output_dict['specific_power_discharge_lst'][1]
+        unique_powers = np.unique(power)
+        const_power = np.median(unique_powers[(unique_powers>600) & (unique_powers<1000)])
+        power[np.where(power<600)] = const_power
+        pulse_power = np.median(unique_powers[unique_powers>1500])
+        power[np.where((power>=1000) & (power<=1500))] = pulse_power
         color = 'tab:orange'
         ax1_3 = ax1.twinx()
         ax1_3.spines["right"].set_position(("outward", 100))  # shift 60 pts away
@@ -776,7 +783,7 @@ if __name__ == "__main__":
         ax1_3.set_ylabel("Power (W/kg-AM)", color=color)
         ax1_3.tick_params(axis="y", colors=color)
         ax1_3.spines['right'].set_color(color)
-        ax1_3.set_ylim([400, 2000])
+        ax1_3.set_ylim([400, 2500])
         # adjust colorbar position
         for a in fig1.axes:
             if a not in [ax1, ax1_2]:     # exclude your main axis
@@ -836,14 +843,14 @@ if __name__ == "__main__":
         plt.close(fig1)
         plt.close(fig)
 
-        # # generate and save summary df
-        try:
-            summary_df = gen_summary_df(output_dict, cell_id)
-            summary_df = summary_df.round(3)
-            summary_df.to_csv(save_folder + f"{cell_id}_summary.csv", index=False)
-        except:
-            print(f'cell id {cell_id} cannot generate summary df, skipping')
-        continue
+        # # # generate and save summary df
+        # try:
+        #     summary_df = gen_summary_df(output_dict, cell_id)
+        #     summary_df = summary_df.round(3)
+        #     summary_df.to_csv(save_folder + f"{cell_id}_summary.csv", index=False)
+        # except:
+        #     print(f'cell id {cell_id} cannot generate summary df, skipping')
+        # continue
 
     yaml = YAML()
     yaml.indent(mapping=2, sequence=4, offset=2)

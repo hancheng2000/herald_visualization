@@ -7,7 +7,6 @@ from herald_visualization.fancy_plot import (
     voltage_vs_capacity_cycling,
     plot_multiple_voltage_vs_cycling,
 )
-from herald_visualization.voltage_vs_capacity_plot_email import id_to_path, plot_voltage_vs_capacity_single_cell_with_overpotential
 from ruamel.yaml import YAML
 from scipy.integrate import simpson
 from galvani import BioLogic
@@ -18,6 +17,7 @@ from ruamel.yaml import YAML
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.io as pio
+from pathlib import Path
 
 default_params = {
     # --- Font ---
@@ -39,12 +39,7 @@ default_params = {
     "savefig.dpi": 600,
     "legend.frameon": False,              
 }
-fontpath = '/home/zhaohc/MyFonts/Poppins/Poppins-Regular.ttf'
-# Register the font
-fm.fontManager.addfont(fontpath)
-prop = fm.FontProperties(fname=fontpath)
 plt.rcParams.update(default_params)
-plt.rcParams['font.family'] = prop.get_name()
 colors = ['tab:blue','orange','green', 'tab:brown', 'purple']*1000
 baseline_color = 'grey'
 bad_color = 'red'
@@ -239,10 +234,58 @@ list_of_aviation_cell_q4q5 = [
   '279C',
   '280A',
   '280B',
-  '280C',      
+  '280C',   
+  '281A',
+  '281B',
+  '281C',
+  '282A',
+  '282B',
+  '282C',
+  '283A',
+  '283B',
+  '283C',
+  '284A',
+  '284B',
+  '284C',
+  '285A',
+  '285B',
+  '285C',
+  '286A',
+  '286B',
+  '286C',
+  '287A',
+  '287B',
+  '287C',
+  '288A',
+  '288B',
+  '288C',
+  '289A',
+  '289B',
+  '290A',
+  '290B',
+  '290C',
+  '291A',
+  '291B',
+  '292A',
+  '292B',
+  '292C',
+  '293A',
+  '293B',
+  '293C',
+  '294A',
+  '294B',
+  '294C',
+  '295A',
+  '295B',
+  '295C',
+  '296A',
+  '296B',
+  '296C',
+  '297A',
+  '297B',
 ]
 
-abnormal_cell_ids = ['121B','125A','121A','125B','121H','121D','257F','121I','275B','276I']
+abnormal_cell_ids = ['121B','125A','121A','125B','121H','121D','257F','121I','275B','276I', '271B', '286C']
 
 def find_max_num_cycles_above_threshold(energies, threshold=90):
     # max (y-x)
@@ -256,12 +299,16 @@ def find_max_num_cycles_above_threshold(energies, threshold=90):
     best_y = 0
     for x in available_xs:
         y = threshold * energies[x] / 100
-        above_y = np.where(energies>=y)[0]
-        above_y = above_y[above_y>x]
-        if len(above_y) == 0:
+        mask = (energies >= y)
+        idxs = np.where(mask[x:])[0]
+        if len(idxs) == 0:
             continue
-        y = above_y[-1]
-        y_minus_x = y - x + 1
+        start = x + idxs[0]
+        tail = mask[start:]
+        inv = np.where(~tail)[0]
+        run_len = inv[0] if len(inv) else len(tail)
+        y = start + run_len - 1
+        y_minus_x = run_len
         if y_minus_x > best_y_minus_x:
             best_y_minus_x = y_minus_x
             best_x = x
@@ -277,7 +324,7 @@ def make_plotly_figure(threshold=80, energy_threshold=800, cell_id_list=None, fi
 
     # --- load data ---
     yaml = YAML()
-    with open('/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_chem_dict.yaml','r') as f:
+    with open('/Users/mac/Research/herald/cell_id_energy_list/hypo_se_chem_dict.yaml','r') as f:
         hypo = yaml.load(f)
 
     # --- collect points ---
@@ -285,8 +332,16 @@ def make_plotly_figure(threshold=80, energy_threshold=800, cell_id_list=None, fi
     x_above, y_above, h_above = [], [], []
     x_q4, y_q4, h_q4 = [], [], []
     x_q3, y_q3, h_q3 = [], [], []
-    q4ids = set(['214F','179A'])  # Q4 cells
+    x_e1, y_e1, h_e1 = [], [], []
+    q4ids = set([])  # Q4 cells
     q3ids = set([]) # Q3 cells
+    # elyte1ids = set(['292B','292C'])
+    elyte1ids = set([])
+    x_q3avfront, y_q3avfront, h_q3avfront = [], [], [] # aviation
+    x_q3spfront, y_q3spfront, h_q3spfront = [], [], [] # shipping
+    x_q4c5front, y_q4c5front, h_q4c5front = [], [], [] # q4c5
+    x_q4avfront, y_q4avfront, h_q4avfront = [], [], [] # q4 aviation
+
     if not cell_id_list:
         cell_id_list = list(hypo.keys())
     for cell_id in cell_id_list:
@@ -318,16 +373,34 @@ def make_plotly_figure(threshold=80, energy_threshold=800, cell_id_list=None, fi
 
         hov = f"cell_id: {cell_id}<br>Max GED {max_energy:.1f} Wh/kg-chem at cycle {max_idx+1}<br>{n80} cycles ≥{int(threshold)}% starting from cycle {start_idx+1}"
 
-        if cell_id in q4ids and threshold==90:
-            x_q4.append(1000.6); y_q4.append(2); h_q4.append(hov)
+        # if cell_id in q4ids and threshold==90:
+        #     x_q4.append(1000.6); y_q4.append(2); h_q4.append(hov)
+        #     continue
+        if cell_id in ['123H']:
+            x_q3avfront.append(max_energy); y_q3avfront.append(n80); h_q3avfront.append(hov)
             continue
-        elif cell_id in q4ids:
-            x_q4.append(max_energy); y_q4.append(n80); h_q4.append(hov)
+        elif cell_id in ['123E']:
+            x_q3spfront.append(max_energy); y_q3spfront.append(n80); h_q3spfront.append(hov)
             continue
-        if cell_id in q3ids:
-            print(cell_id, max_energy, n80)
-            x_q3.append(max_energy); y_q3.append(n80); h_q3.append(hov)
+        elif cell_id in ['123D','184B','183C','172B','172A']:
+            x_q4c5front.append(max_energy); y_q4c5front.append(n80); h_q4c5front.append(hov)
             continue
+        elif cell_id in ['257D','257E', '288C']:
+            x_q4avfront.append(max_energy); y_q4avfront.append(n80); h_q4avfront.append(hov)
+            continue
+        elif cell_id in ['179A'] and threshold==90:
+            x_q4c5front.append(1000.6); y_q4c5front.append(2); h_q4c5front.append(hov)
+        # elif cell_id in q4ids:
+        #     x_q4.append(max_energy); y_q4.append(n80); h_q4.append(hov)
+        #     continue
+        # elif cell_id in elyte1ids:
+        #     x_e1.append(max_energy); y_e1.append(n80); h_e1.append(hov)
+        #     continue
+        # elif cell_id in q3ids:
+        #     print(cell_id, max_energy, n80)
+        #     x_q3.append(max_energy); y_q3.append(n80); h_q3.append(hov)
+        #     continue
+
         # if (max_energy < energy_threshold):
         #     x_below.append(max_energy); y_below.append(n80); h_below.append(hov)
         # else:
@@ -335,9 +408,9 @@ def make_plotly_figure(threshold=80, energy_threshold=800, cell_id_list=None, fi
         x_above.append(max_energy); y_above.append(n80); h_above.append(hov)
 
     # --- Pareto front over ALL points (maximize both axes) ---
-    x_all = np.array(x_above+x_q4+x_q3, dtype=float)
-    y_all = np.array(y_above+y_q4+y_q3, dtype=float)
-    h_all = np.array(h_above+h_q4+h_q3, dtype=object)
+    x_all = np.array(x_above + x_q4 + x_q3 + x_e1 + x_q3avfront + x_q3spfront + x_q4c5front + x_q4avfront)
+    y_all = np.array(y_above + y_q4 + y_q3 + y_e1 + y_q3avfront + y_q3spfront + y_q4c5front + y_q4avfront)
+    h_all = np.array(h_above + h_q4 + h_q3 + h_e1 + h_q3avfront + h_q3spfront + h_q4c5front + h_q4avfront)
 
     x_front = y_front = h_front = np.array([])
     if x_all.size:
@@ -366,11 +439,21 @@ def make_plotly_figure(threshold=80, energy_threshold=800, cell_id_list=None, fi
     if secondary_y:
         color = 'rgba(139, 69, 19, 1.0)'
         q4color = 'rgba(255, 127, 14, 0.5)'
-        q3color = 'rgba(44, 160, 44, 0.5)'        
+        q3color = 'rgba(44, 160, 44, 0.5)'  
+        e1color = 'rgba(0,128,0,1.0)'
+        q3avcolor = 'rgba(255, 127, 14, 1.0)'
+        q3spcolor = 'rgba(128,0,128,1.0)'
+        q4c5color = 'rgba(0,128,0,1.0)'
+        q4avcolor = 'rgba(139, 69, 19, 1.0)'
     else:
-        color = 'rgba(31, 119, 180, 1.0)'
+        color = 'rgba(211, 211, 211, 1.0)'
         q4color = 'rgba(255, 127, 14, 1.0)'
         q3color = 'rgba(44, 160, 44, 1.0)'
+        e1color = 'rgba(0,128,0,1.0)'
+        q3avcolor = 'rgba(255, 127, 14, 1.0)'
+        q3spcolor = 'rgba(128,0,128,1.0)'
+        q4c5color = 'rgba(0,128,0,1.0)'    
+        q4avcolor = 'rgba(31, 119, 180, 1.0)'
 
     # above threshold: blue circles
     if x_above and not secondary_y:
@@ -396,18 +479,66 @@ def make_plotly_figure(threshold=80, energy_threshold=800, cell_id_list=None, fi
             hovertemplate="%{customdata}<extra></extra>", customdata=h_q3,
         ), secondary_y=secondary_y,)
 
+    # Electrolyte 1 cells: green circles
+    if x_e1 and not secondary_y:
+        fig.add_trace(go.Scattergl(
+            x=x_e1, y=y_e1, mode="markers", name="Electrolyte 1",
+            marker=dict(symbol="circle", size=10, color=e1color, line=dict(color="black", width=1.2)),
+            hovertemplate="%{customdata}<extra></extra>", customdata=h_e1,
+        ), secondary_y=secondary_y,)
+
+    if x_q3avfront and not secondary_y:
+        fig.add_trace(go.Scattergl(
+            x=x_q3avfront, y=y_q3avfront, mode="markers", name="Q3 Aviation Front",
+            marker=dict(symbol="circle", size=20, color=q3avcolor, line=dict(color="black", width=1.5)),
+            hovertemplate="%{customdata}<extra></extra>", customdata=h_q3avfront,
+        ), secondary_y=secondary_y,)
+    if x_q3spfront and not secondary_y:
+        fig.add_trace(go.Scattergl(
+            x=x_q3spfront, y=y_q3spfront, mode="markers", name="Q3 Shipping Front",
+            marker=dict(symbol="circle", size=20, color=q3spcolor, line=dict(color="black", width=1.5)),
+            hovertemplate="%{customdata}<extra></extra>", customdata=h_q3spfront,
+        ), secondary_y=secondary_y,)
+    if x_q4c5front and not secondary_y:
+        fig.add_trace(go.Scattergl(
+            x=x_q4c5front, y=y_q4c5front, mode="markers", name="Q4C5 Front",
+            marker=dict(symbol="circle", size=20, color=q4c5color, line=dict(color="black", width=1.5)),
+            hovertemplate="%{customdata}<extra></extra>", customdata=h_q4c5front,
+        ), secondary_y=secondary_y,)
+    if x_q4avfront and not secondary_y:
+        fig.add_trace(go.Scattergl(
+            x=x_q4avfront, y=y_q4avfront, mode="markers", name="Q4 Aviation Front",
+            marker=dict(symbol="circle", size=20, color=q4avcolor, line=dict(color="black", width=1.5)),
+            hovertemplate="%{customdata}<extra></extra>", customdata=h_q4avfront,
+        ), secondary_y=secondary_y,)
+
     # Pareto front
     if x_front.size and not secondary_y:
         # optional line to connect the front; comment out if you want triangles only
-        fig.add_trace(go.Scattergl(
+        fig.add_trace(go.Scatter(
             x=x_front, y=y_front, mode="lines", name=f"Pareto frontier {int(threshold)}% retention",
-            line=dict(color=color, width=2), hoverinfo="skip", showlegend=True,
+            line=dict(color='rgba(216, 67, 21, 1.0)', width=10), hoverinfo="skip", showlegend=True,
         ), secondary_y=secondary_y,)
+        # fig.add_trace(go.Scattergl(
+        #     x=x_front[:], y=y_front[:], mode="markers", name="Pareto front",
+        #     marker=dict(symbol="circle", color=color, size=20, line=dict(color="black", width=1.2)),
+        #     hovertemplate="%{customdata}", customdata=h_front, showlegend=False,
+        # ))        
+        # fig.add_trace(go.Scattergl(
+        #     x=x_front[:2], y=y_front[:2], mode="markers", name="Pareto front",
+        #     marker=dict(symbol="circle", color=e1color, size=20, line=dict(color="black", width=1.2)),
+        #     hovertemplate="%{customdata}", customdata=h_front, showlegend=False,
+        # ))        
+        # fig.add_trace(go.Scattergl(
+        #     x=x_front[-1:], y=y_front[-1:], mode="markers", name="Pareto front",
+        #     marker=dict(symbol="square", color=q4color, size=20, line=dict(color="black", width=1.2)),
+        #     hovertemplate="%{customdata}", customdata=h_front, showlegend=False,
+        # ))
     elif x_front.size and secondary_y:
-        fig.add_trace(go.Scattergl(
-            x=x_front, y=y_front, mode="lines", name=f"Pareto frontier {int(threshold)}% retention",
-            line=dict(color=color, width=2), hoverinfo="skip", showlegend=True,
-        ), secondary_y=secondary_y,)        
+        # fig.add_trace(go.Scattergl(
+        #     x=x_front, y=y_front, mode="lines", name=f"Pareto frontier {int(threshold)}% retention",
+        #     line=dict(color=color, width=2), hoverinfo="skip", showlegend=True,
+        # ), secondary_y=secondary_y,)        
         fig.add_trace(go.Scattergl(
             x=x_front, y=y_front, mode="markers", name="Pareto front",
             marker=dict(symbol="circle", size=10, color=color, line=dict(color="black", width=1.2)),
@@ -483,7 +614,7 @@ def apply_mpl_like_style(
     )
     fig.update_traces(
         selector=lambda tr: (tr.mode or "").find("lines") >= 0,
-        line=dict(width=2.5)
+        line=dict(width=8)
     )
 
     # Hover label typography to match
@@ -495,16 +626,16 @@ def apply_mpl_like_style(
 if __name__ == '__main__':
     threshold = 90
     energy_threshold = 800
-    save_folder = '/scratch/venkvis_root/venkvis/shared_data/herald/all_cycling_plots/'
+    save_folder = '/Users/mac/Research/herald/'
     fig = make_subplots(specs=[[{"secondary_y": False}]])
-    fig = make_plotly_figure(threshold=threshold, energy_threshold=energy_threshold, cell_id_list=list_of_aviation_cell_q4q5, fig=fig, secondary_y=False)
+    fig = make_plotly_figure(threshold=threshold, energy_threshold=energy_threshold, cell_id_list=None, fig=fig, secondary_y=False)
     fig.update_layout(
         xaxis_title="GED (Wh/kg-chem)",
         template="plotly_white",
         hovermode="closest",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),        
     )
-    fig.update_yaxes(title_text=f"# Cycles ≥{int(threshold)}% Energy Retention", color='rgba(31, 119, 180, 1.0)', secondary_y=False,)
+    fig.update_yaxes(title_text=f"# Cycles ≥{int(threshold)}% Energy Retention", secondary_y=False,)
     fig = apply_mpl_like_style(fig,
                                 font_size=22,
                                 axis_line_width=2,
@@ -513,4 +644,35 @@ if __name__ == '__main__':
                                 width=720,
                                 height=630)
     fig.update_layout(showlegend=True)    
-    pio.write_html(fig, file=os.path.join(save_folder, f'pareto_ged_life_er{int(threshold)}.html'), auto_open=False,  include_plotlyjs="inline")
+    fig_html = pio.to_html(fig, include_plotlyjs="inline", full_html=False)
+
+    # Build an HTML shell that loads Poppins, then inject the Plotly figure HTML inside.
+    head = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+    html, body { margin:0; padding:0; font-family: 'Poppins', 'Helvetica Neue', Arial, sans-serif; }
+    </style>
+    <title>Plotly Figure</title>
+    </head>
+    <body>
+    """
+
+    tail = """
+    </body>
+    </html>
+    """
+
+    out = Path(os.path.join(save_folder, f'pareto_ged_life_er{int(threshold)}.html'))
+    out.write_text(head + fig_html + tail, encoding="utf-8")
+    print(f"Wrote {out.resolve()}")    
+
+    # save as png
+    out_png = Path(os.path.join(save_folder, f'pareto_ged_life_er{int(threshold)}.png'))
+    fig.write_image(out_png.resolve().as_posix(), scale=4)

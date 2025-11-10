@@ -683,6 +683,7 @@ if __name__ == "__main__":
         hypo_vavg_am_dict = yaml.load(file)
 
     for hypo in hypo_test_dict.keys():
+        max_cell_id_1_cycles = 0
         se_am_dict = {}
         sc_am_dict = {}
         print(f"Plotting for Track {hypo}: {hypo_test_dict[hypo]['Track']}")
@@ -720,7 +721,7 @@ if __name__ == "__main__":
 
             linestyle_idx = ord(cell_id[-1]) - ord('A')
             cell_id_family = int(cell_id[:-1])
-            if cell_id_family > latest_cell_id:
+            if cell_id_family != latest_cell_id:
                 color_idx += 1
                 marker_idx += 1
                 latest_cell_id = cell_id_family
@@ -787,6 +788,10 @@ if __name__ == "__main__":
             )
             plt.close(fig1)
 
+            if len(discharge_sc_lst_cell_id_1) > max_cell_id_1_cycles:
+                max_cell_id_1_cycles = len(discharge_sc_lst_cell_id_1)
+            
+
             # # # generate and save summary df
             # # try:
             # summary_df = gen_summary_df(output_dict, cell_id, cycles = [0,1])
@@ -796,21 +801,21 @@ if __name__ == "__main__":
             #     # print(f'cell id {cell_id} cannot generate summary df, skipping')
             #     # continue
 
-
+        if max_cell_id_1_cycles > 10:
+            max_cell_id_1_cycles = 10
         ax2.set_xlabel("Cycle Number")
         # ax2.set_ylabel("Specific Energy (Wh/kg-AM)")
         ax2.set_ylabel('Specific Capacity (mAh/kg-AM)')
-        ax2.set_ylim([300, 650])
+        ax2.set_ylim([300, 450])
         # set legend on side of the figure
         ax2.legend(
             loc="center left", bbox_to_anchor=(1, 0.5), frameon=False
         )
-        max_cell_id_1_cycles = 10
         # n_ticks = 5 if max_cell_id_1_cycles > 10 else max_cell_id_1_cycles
         n_ticks = 10
         ax2.set_xticks(np.linspace(1, max_cell_id_1_cycles, n_ticks).astype(int))
-        ax2.set_xlim([0.5, 10.5])
-        fig2.suptitle(f'Track {hypo}: {hypo_test_dict[hypo]["Track"]}')
+        ax2.set_xlim([0.5, max_cell_id_1_cycles+0.5])
+        fig2.suptitle(f'{hypo_test_dict[hypo]["Track"]}')
         fig2.savefig(
             save_folder + f"hypothesis_{hypo}_AM_sc.png",
             dpi=200,
@@ -819,17 +824,14 @@ if __name__ == "__main__":
         plt.close(fig2)
         ax3.set_xlabel("Cycle Number")
         ax3.set_ylabel('Energy Retention (from cycle 1) (%)')
-        ax3.set_xlim([0.5, 10.5])
+        ax3.set_xlim([0.5, max_cell_id_1_cycles+0.5])
         ax3.set_ylim([80, 105])
         ax3.legend(
             loc="center left", bbox_to_anchor=(1, 0.5), frameon=False
         )
-        max_cell_id_1_cycles = 10
-        # n_ticks = 5 if max_cell_id_1_cycles > 10 else max_cell_id_1_cycles
-        # n_ticks = 10
         # ax3.set_xticks(np.linspace(1, max_cell_id_1_cycles, n_ticks).astype(int))
-        ax3.set_xlim([0.5, 10.5])
-        fig3.suptitle(f'Track {hypo}: {hypo_test_dict[hypo]["Track"]}')
+        ax3.set_xlim([0.5, max_cell_id_1_cycles+0.5])
+        fig3.suptitle(f'{hypo_test_dict[hypo]["Track"]}')
         fig3.savefig(
             save_folder + f"hypothesis_{hypo}_chem_er.png",
             dpi=200,
@@ -838,17 +840,16 @@ if __name__ == "__main__":
         plt.close(fig3)  
         ax4.set_xlabel("Cycle Number")
         ax4.set_ylabel('Specific Energy (Wh/kg-AM)')
-        # ax4.set_ylim([600, 1300])
+        ax4.set_ylim([400, 850])
         # ax4.set_xlim([0, 5])
         ax4.legend(
             loc="center left", bbox_to_anchor=(1, 0.5), frameon=False
         )
-        max_cell_id_1_cycles = 10
         # n_ticks = 5 if max_cell_id_1_cycles > 10 else max_cell_id_1_cycles
         n_ticks = 10
         # ax4.set_xticks(np.linspace(1, 70, max_cell_id_1_cycles).astype(int))
-        ax4.set_xlim([0.5, 10.5])
-        fig4.suptitle(f'Track {hypo}: {hypo_test_dict[hypo]["Track"]}')
+        ax4.set_xlim([0.5, max_cell_id_1_cycles+0.5])
+        fig4.suptitle(f'{hypo_test_dict[hypo]["Track"]}')
         fig4.savefig(
             save_folder + f"hypothesis_{hypo}_AM_se.png",
             dpi=200,
@@ -857,17 +858,16 @@ if __name__ == "__main__":
         plt.close(fig4)
         ax5.set_xlabel("Cycle Number")
         ax5.set_ylabel('Specific Energy (Wh/kg-Chem)')
-        ax5.set_ylim([600, 1000])
+        ax5.set_ylim([500, 1000])
         # ax5.set_xlim([0, 5])
         ax5.legend(
             loc="center left", bbox_to_anchor=(1, 0.5), frameon=False
         )
-        max_cell_id_1_cycles = 10
         # n_ticks = 5 if max_cell_id_1_cycles > 10 else max_cell_id_1_cycles
         n_ticks = 10
         # ax5.set_xticks(np.linspace(1, 70, max_cell_id_1_cycles).astype(int))
-        ax5.set_xlim([0.5, 10.5])
-        fig5.suptitle(f'Track {hypo}: {hypo_test_dict[hypo]["Track"]}')
+        ax5.set_xlim([0.5, max_cell_id_1_cycles+0.5])
+        fig5.suptitle(f'{hypo_test_dict[hypo]["Track"]}')
         fig5.savefig(
             save_folder + f"hypothesis_{hypo}_chem_se.png",
             dpi=200,
