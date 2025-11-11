@@ -1,1 +1,1 @@
-/scratch/venkvis_root/venkvis/shared_data/herald/Electrochemical_Testing
+/Volumes/Hancheng/herald/Electrochemical_Testing

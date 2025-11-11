@@ -38,12 +38,8 @@ default_params = {
     "legend.frameon": False,
 }
 plt.rcParams.update(default_params)
-
-# cells_df = pd.read_csv('/scratch/venkvis_root/venkvis/shared_data/herald/Electrochemical_Testing/In-house cells and syntheses - Coin Cells.csv')
-# available_ids = cells_df['Test ID'].tolist()
-
 # function for handling id to absolute path
-data_path = "/scratch/venkvis_root/venkvis/shared_data/herald/Electrochemical_Testing/BCS905"  # here is where data path is taken care of
+data_path = "/Volumes/Hancheng/herald/Electrochemical_Testing/BCS905"  # here is where data path is taken care of
 
 
 def id_to_path(cellid, root_dir=data_path):
@@ -122,12 +118,6 @@ def plot_voltage_vs_capacity_single_cell(
         return None
     df = pd.read_csv(id_to_path(cell_id))
     print(id_to_path(cell_id))
-    df_in_house_cell_and_synthesis = pd.read_csv(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/In-house cells and syntheses - Cells.csv"
-    )
-    df_in_house_cell_and_synthesis = df_in_house_cell_and_synthesis[
-        df_in_house_cell_and_synthesis["Test ID"] == cell_id
-    ]
     unique_cycles = df["full cycle"].unique().astype(int).tolist()
     cell_id_1_cycles = unique_cycles[:-1]
     output_dict = voltage_vs_capacity_cycling(df, cycles=cell_id_1_cycles, plot=False)
@@ -249,12 +239,6 @@ def plot_voltage_vs_capacity_single_cell_with_overpotential(
         return None
     df = pd.read_csv(id_to_path(cell_id))
     print(id_to_path(cell_id))
-    df_in_house_cell_and_synthesis = pd.read_csv(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/In-house cells and syntheses - Cells.csv"
-    )
-    df_in_house_cell_and_synthesis = df_in_house_cell_and_synthesis[
-        df_in_house_cell_and_synthesis["Test ID"] == cell_id
-    ]
     unique_cycles = df["full cycle"].unique().astype(int).tolist()
     cell_id_1_cycles = unique_cycles[:-1]
     output_dict = voltage_vs_capacity_cycling(df, cycles=cell_id_1_cycles, plot=False)
@@ -370,12 +354,6 @@ def plot_dqdv_single_cell(
         return None
     df = pd.read_csv(id_to_path(cell_id))
     print(id_to_path(cell_id))
-    df_in_house_cell_and_synthesis = pd.read_csv(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/In-house cells and syntheses - Cells.csv"
-    )
-    df_in_house_cell_and_synthesis = df_in_house_cell_and_synthesis[
-        df_in_house_cell_and_synthesis["Test ID"] == cell_id
-    ]
     unique_cycles = df["full cycle"].unique().astype(int).tolist()
     cell_id_1_cycles = unique_cycles[:-1]
     output_dict = voltage_vs_capacity_cycling(df, cycles=cell_id_1_cycles, plot=False)
@@ -489,7 +467,7 @@ def plot_dqdv_single_cell(
     return output_dict, fig, ax
 
 
-def plot_er_cell(cell_id, output_dict, discharge_se_lst_cell_id_1, fig, ax, save_folder="/scratch/venkvis_root/venkvis/shared_data/herald/all_cycling_plots/"):
+def plot_er_cell(cell_id, output_dict, discharge_se_lst_cell_id_1, fig, ax, save_folder="/Volumes/Hancheng/herald/all_cycling_plots/"):
     if not fig or not ax:
         fig, ax = plt.subplots(1, 1, figsize=(9, 6), dpi=100)
 
@@ -686,7 +664,7 @@ def gen_summary_df(output_dict, cell_id):
     return summary_df
 
 def chemistry_se(energy_am,cell_id):
-    spec_df = pd.read_csv('/scratch/venkvis_root/venkvis/shared_data/herald/In-house cells and syntheses - cell-design-input.csv')
+    spec_df = pd.read_csv('/Volumes/Hancheng/herald/In-house cells and syntheses - cell-design-input.csv')
     coeffs = {"70_3_30": 0.63,
     "75_3_30": 0.67,
     "80_3_30": 0.71,
@@ -722,10 +700,10 @@ if __name__ == "__main__":
     
     from scipy.integrate import simpson
 
-    save_folder = "/scratch/venkvis_root/venkvis/shared_data/herald/all_cycling_plots/"
+    save_folder = "/Volumes/Hancheng/herald/all_cycling_plots/"
     fig, ax = plt.subplots(1, 1, figsize=(9, 6), dpi=100)
     yaml = YAML()
-    with open('/scratch/venkvis_root/venkvis/shared_data/herald/list_of_cycling_cell.yaml', 'r') as file:
+    with open('/Volumes/Hancheng/herald/list_of_cycling_cell.yaml', 'r') as file:
         df_ids = yaml.load(file)
     ids = df_ids['ids']
     se_am_dict = {}
@@ -855,18 +833,18 @@ if __name__ == "__main__":
     yaml = YAML()
     yaml.indent(mapping=2, sequence=4, offset=2)
     with open(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_am_dict.yaml", "w"
+        "/Volumes/Hancheng/herald/cell_id_energy_list/hypo_se_am_dict.yaml", "w"
     ) as file:
         yaml.dump(se_am_dict, file)
     with open(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_sc_am_dict.yaml", "w"
+        "/Volumes/Hancheng/herald/cell_id_energy_list/hypo_sc_am_dict.yaml", "w"
     ) as file:
         yaml.dump(sc_am_dict, file)
     with open(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_vavg_am_dict.yaml", "w"
+        "/Volumes/Hancheng/herald/cell_id_energy_list/hypo_vavg_am_dict.yaml", "w"
     ) as file:
         yaml.dump(avg_voltage_dict, file)
     with open(
-        "/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_chem_dict.yaml", "w"
+        "/Volumes/Hancheng/herald/cell_id_energy_list/hypo_se_chem_dict.yaml", "w"
     ) as file:
         yaml.dump(se_chem_dict, file)

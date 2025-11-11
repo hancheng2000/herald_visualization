@@ -53,20 +53,31 @@ if __name__ == '__main__':
             df = pd.read_csv(os.path.join(full_path, 'outputs', 'cycle_summary.csv'))
             if len(df) == 0:
                 continue
-            if 'Specific Discharge Energy Total AM' not in df.columns:
-                continue
-            chem_se = chemistry_se(df['Specific Discharge Energy Total AM'].to_numpy(),cell_id)                
-            if chem_se is None:
-                continue
-            energy_dict[cell_id] = df['Specific Discharge Energy Total AM'].tolist()
-            chem_se_dict[cell_id] = chem_se.tolist()
-            sc_dict[cell_id] = df['Specific Discharge Capacity Total AM'].tolist()
-            chem_sc = chemistry_se(df['Specific Discharge Capacity Total AM'].to_numpy(),cell_id)
-            chem_sc_dict[cell_id] = chem_sc.tolist()
-            v_avg = df['Specific Discharge Energy Total AM'].to_numpy() / df['Specific Discharge Capacity Total AM'].to_numpy()
-            vavg_dict[cell_id] = v_avg.tolist()
+            if 'Specific Discharge Energy Total AM' in df.columns:
+                energy_dict[cell_id] = df['Specific Discharge Energy Total AM'].tolist()
+                chem_se = chemistry_se(df['Specific Discharge Energy Total AM'].to_numpy(),cell_id)                
+                if chem_se is None or len(chem_se) == 0:
+                    chem_se_dict[cell_id] = None
+                else:
+                    chem_se_dict[cell_id] = chem_se.tolist()
+            if 'Specific Discharge Capacity Total AM' in df.columns:
+                sc_dict[cell_id] = df['Specific Discharge Capacity Total AM'].tolist()
+                chem_sc = chemistry_se(df['Specific Discharge Capacity Total AM'].to_numpy(),cell_id)
+                if chem_sc is None or len(chem_sc) == 0:
+                    chem_sc_dict[cell_id] = None
+                else:
+                    chem_sc_dict[cell_id] = chem_sc.tolist()
+            if ('Specific Discharge Capacity Total AM' in df.columns) and ('Specific Discharge Energy Total AM' in df.columns):
+                vavg = df['Specific Discharge Energy Total AM'].to_numpy() / df['Specific Discharge Capacity Total AM'].to_numpy()
+                if vavg is None or len(vavg) == 0:
+                    vavg_dict[cell_id] = None
+                else:
+                    vavg_dict[cell_id] = vavg.tolist()
             # except:
             #     print(f"Error reading summary file in {full_path}")
+        else:
+            print(f"No summary file in {full_path}")
+            continue
         
     with open(f'/scratch/venkvis_root/venkvis/shared_data/herald/cell_id_energy_list/hypo_se_am_dict.yaml', 'w') as f:
         yaml.dump(energy_dict, f)

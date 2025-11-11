@@ -64,7 +64,10 @@ for path in glob_list:
         os.chdir(base_path)
     else:
         # If no exceptions were raised, run mpr2csv
-        cycle_mpr2csv(full_path, export_csv=export_csv)
-        run_count += 1
+        try:
+            cycle_mpr2csv(full_path, export_csv=export_csv)
+            run_count += 1
+        except:
+            os.chdir(base_path)
 print(f"\nLocated {len(glob_list)} data paths.")
 print(f"Ran cycle_mpr2csv in {run_count} data paths.")
